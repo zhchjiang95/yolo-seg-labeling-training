@@ -280,7 +280,14 @@ if __name__ == '__main__':
         """
         正则解析控制台日志，提取指标和训练 Epoch
         """
-        # 1. 尝试匹配训练进度（例如 Epoch 进度）
+        # 1. 尝试匹配 tqdm 进度条的 ETA 信息，形如 "[00:45<02:30, 4.51it/s]"
+        # 移到最前面，且匹配成功后不 return，以防止在一行同时包含 Epoch 进度和进度条时被提前拦截
+        eta_match = re.search(r'\[([0-9:]+)<([0-9:]+)', line)
+        if eta_match:
+            with self.lock:
+                self.progress["eta"] = eta_match.group(2)
+
+        # 2. 尝试匹配训练进度（例如 Epoch 进度）
         # 很多情况下，tqdm 进度条的前面会包含 \r 或者终端控制符，所以用 search 代替 match
         # 匹配类似: "  1/300      1.24G      1.123      1.456     0.9876      1.221         32        960:"
         epoch_search = re.search(r'(\d+)/(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+):', line)
@@ -306,7 +313,7 @@ if __name__ == '__main__':
                 pass
             return
 
-        # 2. 尝试匹配指标行（通常在每个 Epoch 结束的 validation 阶段输出）
+        # 3. 尝试匹配指标行（通常在每个 Epoch 结束的 validation 阶段输出）
         # 例如: "all        103        103      0.823      0.791      0.812      0.543"
         # 使用 search 搜寻以避开可能的控制码
         metric_search = re.search(r'all\s+\d+\s+\d+\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+))?', line)
@@ -329,9 +336,3 @@ if __name__ == '__main__':
             except Exception:
                 pass
             return
-
-        # 3. 尝试匹配 tqdm 进度条的 ETA 信息，形如 "[00:45<02:30, 4.51it/s]"
-        eta_match = re.search(r'<([0-9:]+)', line)
-        if eta_match:
-            with self.lock:
-                self.progress["eta"] = eta_match.group(1)
