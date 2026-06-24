@@ -78,7 +78,6 @@ body {
 
 /* 容器与布局 */
 .container {
-  max-width: 1440px;
   margin: 0 auto;
   padding: 24px;
   min-height: 100vh;
