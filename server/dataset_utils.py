@@ -12,10 +12,11 @@ def split_dataset(
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
     test_ratio: float = 0.1,
-    seed: int = 42
+    seed: int = 42,
+    local_dataset_dir: str = None
 ) -> Dict[str, Any]:
     """
-    解压 ZIP 数据集并按比例划分为 train/val/test 集合，生成 YOLO 格式的数据结构和 data.yaml。
+    解压 ZIP 数据集或直接使用本地已标注目录，按比例划分为 train/val/test 集合，生成 YOLO 格式的数据结构和 data.yaml。
     """
     # 确保比例总和为 1
     total_ratio = train_ratio + val_ratio + test_ratio
@@ -29,86 +30,103 @@ def split_dataset(
     random.seed(seed)
 
     # 路径转换
-    zip_path_obj = Path(zip_path)
     output_dir_obj = Path(output_dir)
     
-    # 临时解压目录
-    temp_extract_dir = output_dir_obj / "temp_extracted"
-    if temp_extract_dir.exists():
-        shutil.rmtree(temp_extract_dir)
-    temp_extract_dir.mkdir(parents=True, exist_ok=True)
+    # 检查是否使用本地已标注数据集
+    use_local = False
+    if local_dataset_dir:
+        local_img_dir = Path(local_dataset_dir) / "images"
+        if local_img_dir.exists() and any(local_img_dir.iterdir()):
+            use_local = True
 
-    # 1. 解压缩文件
-    print(f"正在解压 {zip_path_obj} 到临时目录...")
-    try:
-        with zipfile.ZipFile(zip_path_obj, 'r') as zip_ref:
-            # 解决 zip 解压中文路径乱码问题
-            for member in zip_ref.infolist():
-                try:
-                    # Windows 下通常使用 cp437 编码，转成 utf-8
-                    filename = member.filename.encode('cp437').decode('gbk')
-                except Exception:
-                    filename = member.filename
-                
-                target_path = temp_extract_dir / filename
-                # 确保父目录存在
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                if not member.is_dir():
-                    with zip_ref.open(member) as source, open(target_path, "wb") as target:
-                        shutil.copyfileobj(source, target)
-    except Exception as e:
+    if use_local:
+        print(f"使用本地已标注数据集进行划分: {local_dataset_dir}")
+        images_dir = Path(local_dataset_dir) / "images"
+        labels_dir = Path(local_dataset_dir) / "labels"
+        classes_file = Path(local_dataset_dir) / "classes.txt"
+        
+        # 确保 labels 目录存在
+        labels_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # 临时解压目录
+        temp_extract_dir = output_dir_obj / "temp_extracted"
         if temp_extract_dir.exists():
             shutil.rmtree(temp_extract_dir)
-        raise RuntimeError(f"解压数据集失败: {str(e)}")
+        temp_extract_dir.mkdir(parents=True, exist_ok=True)
 
-    # 2. 定位图片和标签目录，以及 classes.txt
-    # 查找 temp_extracted 内部的 images/ 文件夹
-    images_dir = None
-    labels_dir = None
-    classes_file = None
+        # 1. 解压缩文件
+        zip_path_obj = Path(zip_path)
+        print(f"正在解压 {zip_path_obj} 到临时目录...")
+        try:
+            with zipfile.ZipFile(zip_path_obj, 'r') as zip_ref:
+                # 解决 zip 解压中文路径乱码问题
+                for member in zip_ref.infolist():
+                    try:
+                        # Windows 下通常使用 cp437 编码，转成 utf-8
+                        filename = member.filename.encode('cp437').decode('gbk')
+                    except Exception:
+                        filename = member.filename
+                    
+                    target_path = temp_extract_dir / filename
+                    # 确保父目录存在
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    if not member.is_dir():
+                        with zip_ref.open(member) as source, open(target_path, "wb") as target:
+                            shutil.copyfileobj(source, target)
+        except Exception as e:
+            if temp_extract_dir.exists():
+                shutil.rmtree(temp_extract_dir)
+            raise RuntimeError(f"解压数据集失败: {str(e)}")
 
-    # 遍历临时解压目录以寻找核心文件夹，兼容多层目录情况
-    for root, dirs, files in os.walk(temp_extract_dir):
-        root_path = Path(root)
-        if "images" in dirs:
-            images_dir = root_path / "images"
-        if "labels" in dirs:
-            labels_dir = root_path / "labels"
-        if "classes.txt" in files:
-            classes_file = root_path / "classes.txt"
+        # 2. 定位图片和标签目录，以及 classes.txt
+        # 查找 temp_extracted 内部的 images/ 文件夹
+        images_dir = None
+        labels_dir = None
+        classes_file = None
 
-    # 如果没有显式的 images 目录，直接在根目录或子目录下寻找所有图片文件
-    if not images_dir:
-        # 尝试寻找任何图片格式的文件
-        all_imgs = []
-        for ext in ('.jpg', '.jpeg', '.png', '.bmp', '.webp'):
-            all_imgs.extend(list(temp_extract_dir.rglob(f"*{ext}")))
-        if not all_imgs:
-            shutil.rmtree(temp_extract_dir)
-            raise ValueError("在压缩包中未找到任何图片文件。")
-        # 假设存在默认位置
-        images_dir = temp_extract_dir / "images"
-        labels_dir = temp_extract_dir / "labels"
-        images_dir.mkdir(exist_ok=True)
-        labels_dir.mkdir(exist_ok=True)
-        # 移动图片到 images 文件夹下
-        for img_path in all_imgs:
-            # 避免死循环移动
-            if "images" not in img_path.parts:
-                shutil.move(str(img_path), str(images_dir / img_path.name))
+        # 遍历临时解压目录以寻找核心文件夹，兼容多层目录情况
+        for root, dirs, files in os.walk(temp_extract_dir):
+            root_path = Path(root)
+            if "images" in dirs:
+                images_dir = root_path / "images"
+            if "labels" in dirs:
+                labels_dir = root_path / "labels"
+            if "classes.txt" in files:
+                classes_file = root_path / "classes.txt"
 
-    # 如果有 images 目录但没有 labels 目录，创建一个空的
-    if not labels_dir:
-        labels_dir = images_dir.parent / "labels"
-        labels_dir.mkdir(exist_ok=True)
+        # 如果没有显式的 images 目录，直接在根目录或子目录下寻找所有图片文件
+        if not images_dir:
+            # 尝试寻找任何图片格式的文件
+            all_imgs = []
+            for ext in ('.jpg', '.jpeg', '.png', '.bmp', '.webp'):
+                all_imgs.extend(list(temp_extract_dir.rglob(f"*{ext}")))
+            if not all_imgs:
+                shutil.rmtree(temp_extract_dir)
+                raise ValueError("在压缩包中未找到任何图片文件。")
+            # 假设存在默认位置
+            images_dir = temp_extract_dir / "images"
+            labels_dir = temp_extract_dir / "labels"
+            images_dir.mkdir(exist_ok=True)
+            labels_dir.mkdir(exist_ok=True)
+            # 移动图片到 images 文件夹下
+            for img_path in all_imgs:
+                # 避免死循环移动
+                if "images" not in img_path.parts:
+                    shutil.move(str(img_path), str(images_dir / img_path.name))
+
+        # 如果有 images 目录但没有 labels 目录，创建一个空的
+        if not labels_dir:
+            labels_dir = images_dir.parent / "labels"
+            labels_dir.mkdir(exist_ok=True)
 
     # 3. 收集所有的图片，并匹配标签
     image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.webp', '.JPG', '.PNG', '.JPEG')
     images_list = [f for f in images_dir.iterdir() if f.is_file() and f.suffix in image_extensions]
     
     if not images_list:
-        shutil.rmtree(temp_extract_dir)
+        if not use_local:
+            shutil.rmtree(temp_extract_dir)
         raise ValueError("未在 images 目录下找到有效图片文件。")
 
     # 4. 创建最终的划分子集目录结构
@@ -200,7 +218,8 @@ names:
         f.write(yaml_content)
 
     # 9. 清理临时解压目录
-    shutil.rmtree(temp_extract_dir)
+    if not use_local and temp_extract_dir.exists():
+        shutil.rmtree(temp_extract_dir)
 
     print(f"数据集划分完成。总计: {total_count} 张图片。")
     print(f"训练集: {stats['train']['images']}，验证集: {stats['val']['images']}，测试集: {stats['test']['images']}")

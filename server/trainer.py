@@ -149,7 +149,7 @@ class YOLOTrainer:
             except Exception:
                 train_r, val_r, test_r = 0.8, 0.1, 0.1
 
-            self._write_log("[SYSTEM] 正在准备数据集，执行解压缩与划分...\n")
+            self._write_log("[SYSTEM] 正在准备数据集，执行数据划分...\n")
             
             split_res = split_dataset(
                 zip_path=str(zip_path),
@@ -157,7 +157,8 @@ class YOLOTrainer:
                 train_ratio=train_r,
                 val_ratio=val_r,
                 test_ratio=test_r,
-                seed=42
+                seed=42,
+                local_dataset_dir=str(self.workspace_dir / "datasets" / "labeling")
             )
             
             data_yaml_path = split_res["data_yaml"]
