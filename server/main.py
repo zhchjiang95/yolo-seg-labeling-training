@@ -472,7 +472,7 @@ def sam_predict_polygons(req: SAMPredictRequest):
         
     try:
         sam = predictor.get_sam_model()
-        results = sam(str(image_path), points=req.points, labels=req.labels)
+        results = sam(str(image_path), points=[req.points], labels=[req.labels])
         
         polygons = []
         if len(results) > 0 and results[0].masks is not None:
