@@ -371,6 +371,19 @@
           <input type="text" v-model="searchQuery" placeholder="搜索图片文件名..." style="padding: 8px 12px; font-size: 13px;" />
         </div>
 
+        <!-- 快速过滤 Tab 栏 -->
+        <div class="filter-tab-bar">
+          <button class="filter-tab-btn" :class="{ active: filterStatus === 'all' }" @click="filterStatus = 'all'">
+            全部 ({{ imageList.length }})
+          </button>
+          <button class="filter-tab-btn" :class="{ active: filterStatus === 'labeled' }" @click="filterStatus = 'labeled'">
+            已标 ({{ imageList.filter(img => img.labeled).length }})
+          </button>
+          <button class="filter-tab-btn" :class="{ active: filterStatus === 'unlabeled' }" @click="filterStatus = 'unlabeled'">
+            未标 ({{ imageList.filter(img => !img.labeled).length }})
+          </button>
+        </div>
+
         <!-- 点击/拖拽上传 -->
         <div class="upload-area" @click="triggerUpload" @dragover.prevent @drop.prevent="handleFileDrop">
           <svg style="width: 20px; height: 20px; margin: 0 auto 6px; display: block;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -385,13 +398,18 @@
           <div v-if="filteredImageList.length === 0" style="text-align: center; color: var(--text-muted); font-size: 13px; margin-top: 20px;">
             暂无图片
           </div>
-          <div v-for="img in filteredImageList" :key="img.name" class="file-item" :class="{ active: currentImage && currentImage.name === img.name }" @click="selectImage(img)">
-            <div style="display: flex; align-items: center; gap: 8px; overflow: hidden; width: 85%;">
+          <div v-for="(img, idx) in filteredImageList" :key="img.name" class="file-item" :class="{ active: currentImage && currentImage.name === img.name }" @click="selectImage(img)">
+            <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; flex: 1;">
+              <!-- 序号展示 -->
+              <span class="file-item-idx" style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); flex-shrink: 0; min-width: 20px;">{{ idx + 1 }}</span>
               <span class="status-dot" :class="img.labeled ? 'labeled' : 'unlabeled'" :title="img.labeled ? '已标注' : '未标注'"></span>
-              <span class="file-item-name" :title="img.name">{{ img.name }}</span>
+              <span class="file-item-name" :title="img.name" style="max-width: 110px;">{{ img.name }}</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 10px; color: var(--text-muted);">{{ img.size_kb }}K</span>
+            <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+              <!-- 显式区分文字 Badge -->
+              <span class="status-badge-inline" :class="img.labeled ? 'labeled' : 'unlabeled'">
+                {{ img.labeled ? '已标' : '未标' }}
+              </span>
               <button class="file-delete-btn" @click="deleteImage(img.name, $event)" title="删除图片">
                 <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="3 6 5 6 21 6"/>
@@ -408,7 +426,7 @@
         <!-- 标注控制工具栏 -->
         <div class="canvas-toolbar">
           <!-- 工具模式选择 -->
-          <div style="display: flex; gap: 6px;">
+          <div style="display: flex; gap: 6px; align-items: center;">
             <button class="tool-btn" :class="{ active: activeTool === 'edit' }" @click="setTool('edit')" title="选择/调整多边形及顶点">
               <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="5 3 19 12 15 13 9 17 5 3"/>
@@ -433,11 +451,8 @@
               </svg>
               手形拖拽
             </button>
-          </div>
 
-          <!-- 自动识别与清除保存 -->
-          <div style="display: flex; gap: 8px;">
-            <!-- 一键模型识别悬停下拉列表 -->
+            <!-- 一键模型识别悬停下拉列表 (移到左侧工具组并齐左) -->
             <div class="dropdown-wrapper">
               <button class="tool-btn" :disabled="!currentImage || isAutoDetecting" style="border-color: var(--success); color: var(--success);" title="鼠标悬浮选择模型识别全图">
                 <span v-if="isAutoDetecting" class="status-dot active" style="margin-right: 4px;"></span>
@@ -470,7 +485,10 @@
                 </div>
               </div>
             </div>
+          </div>
 
+          <!-- 清理与保存动作组 -->
+          <div style="display: flex; gap: 8px;">
             <button class="tool-btn" @click="clearPolygons" :disabled="polygons.length === 0" title="清空当前图片所有多边形">
               清空
             </button>
@@ -519,8 +537,8 @@
                   :key="'mid-' + mid.index"
                   :cx="mid.x"
                   :cy="mid.y"
-                  r="3.5"
-                  style="fill: rgba(99, 102, 241, 0.7); stroke: #fff; stroke-width: 1px; cursor: pointer;"
+                  r="2.5"
+                  style="fill: rgba(99, 102, 241, 0.35); stroke: rgba(99, 102, 241, 0.85); stroke-width: 1px; cursor: pointer;"
                   @mousedown.stop="insertPoint($event, activePolyIndex, mid.index, mid.x, mid.y)"
                   title="点击并拖拽以添加点"
                 />
@@ -531,7 +549,7 @@
                   :key="'pt-' + ptIndex"
                   :cx="pt[0] * imgNaturalWidth"
                   :cy="pt[1] * imgNaturalHeight"
-                  r="5"
+                  r="3.5"
                   class="svg-point"
                   :class="{ 'active-drag': dragInfo && dragInfo.polyIndex === activePolyIndex && dragInfo.ptIndex === ptIndex }"
                   @mousedown.stop="startDragPoint($event, activePolyIndex, ptIndex)"
@@ -571,8 +589,8 @@
                   :key="'draw-pt-' + ptIndex"
                   :cx="pt[0] * imgNaturalWidth"
                   :cy="pt[1] * imgNaturalHeight"
-                  :r="ptIndex === 0 ? 6 : 4"
-                  :style="ptIndex === 0 ? 'fill: var(--success); stroke: #fff; stroke-width: 1.5px; cursor: pointer;' : 'fill: var(--primary); stroke: #fff; stroke-width: 1px;'"
+                  :r="ptIndex === 0 ? 5 : 3"
+                  :style="ptIndex === 0 ? 'fill: rgba(16, 185, 129, 0.65); stroke: #fff; stroke-width: 1.2px; cursor: pointer;' : 'fill: rgba(99, 102, 241, 0.5); stroke: #fff; stroke-width: 1px;'"
                   @click.stop="ptIndex === 0 ? finishDrawing() : null"
                   :title="ptIndex === 0 ? '点击闭合多边形' : ''"
                 />
@@ -917,6 +935,7 @@ const updateThemeClass = () => {
 
 const imageList = ref([]);
 const searchQuery = ref('');
+const filterStatus = ref('all'); // all | labeled | unlabeled
 const currentImage = ref(null);
 const activeTool = ref('edit'); // edit | draw | sam | pan
 
@@ -965,9 +984,15 @@ const currentImageSrc = computed(() => {
 
 // 筛选后的图片列表
 const filteredImageList = computed(() => {
-  if (!searchQuery.value) return imageList.value;
+  let list = imageList.value;
+  if (filterStatus.value === 'labeled') {
+    list = list.filter(img => img.labeled);
+  } else if (filterStatus.value === 'unlabeled') {
+    list = list.filter(img => !img.labeled);
+  }
+  if (!searchQuery.value) return list;
   const q = searchQuery.value.toLowerCase();
-  return imageList.value.filter(img => img.name.toLowerCase().includes(q));
+  return list.filter(img => img.name.toLowerCase().includes(q));
 });
 
 // 获取待标图片列表

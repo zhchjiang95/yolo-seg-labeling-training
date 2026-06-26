@@ -852,6 +852,64 @@ select:focus {
   background: rgba(239, 68, 68, 0.1);
 }
 
+/* 图集列表过滤 Tab 及内联 Badge 样式 */
+.filter-tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 3px;
+}
+
+.dark-theme .filter-tab-bar {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.filter-tab-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.filter-tab-btn:hover {
+  color: var(--primary);
+}
+
+.filter-tab-btn.active {
+  background: var(--bg-card);
+  color: var(--primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.status-badge-inline {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.2;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.status-badge-inline.labeled {
+  background: var(--success-glow);
+  color: var(--success);
+}
+
+.status-badge-inline.unlabeled {
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text-muted);
+}
+
 /* ==========================================
    画布区域
    ========================================== */
@@ -942,25 +1000,27 @@ select:focus {
 }
 
 .svg-point {
-  fill: #fff;
+  fill: rgba(255, 255, 255, 0.45); /* 半透明白色，不遮挡下方画面 */
   stroke: var(--primary);
-  stroke-width: 1.5px;
+  stroke-width: 1.2px;
   cursor: move;
-  transition: r 0.1s, fill 0.1s;
+  transition: all 0.15s ease;
 }
 
 .svg-point:hover {
   fill: var(--primary);
-  r: 6px;
+  stroke: #fff;
+  r: 5px; /* 悬浮时变大，增强拖拽反馈 */
 }
 
 .svg-point.active-drag {
   fill: #8b5cf6;
   stroke: #fff;
-  r: 7px;
+  r: 5.5px;
 }
 
 .svg-line-temp {
+  fill: none; /* 移除未闭合多边形的黑色填充 */
   stroke: var(--primary);
   stroke-width: 1.5px;
   stroke-dasharray: 4;
@@ -1227,12 +1287,10 @@ select:focus {
 .dropdown-menu {
   position: absolute;
   top: 100%;
-  right: 0;
+  left: 0;
   margin-top: 8px;
   width: 260px;
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: #ffffff;
   border: 1px solid var(--border-color);
   border-radius: 10px;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
@@ -1243,6 +1301,10 @@ select:focus {
   visibility: hidden;
   transform: translateY(10px);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark-theme .dropdown-menu {
+  background: #12121e;
 }
 
 .dropdown-wrapper:hover .dropdown-menu {
