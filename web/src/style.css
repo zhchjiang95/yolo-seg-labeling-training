@@ -991,7 +991,7 @@ select:focus {
 .svg-polygon {
   fill: rgba(99, 102, 241, 0.12);
   stroke: var(--primary);
-  stroke-width: 1.5px;
+  stroke-width: 0.75px; /* 线宽缩小一半 */
   transition: fill 0.2s;
   cursor: pointer;
 }
@@ -1003,47 +1003,43 @@ select:focus {
 .svg-polygon.active {
   fill: rgba(139, 92, 246, 0.22);
   stroke: #8b5cf6;
-  stroke-width: 2px;
+  stroke-width: 1px; /* 线宽缩小一半 */
 }
 
 .svg-point {
   fill: rgba(255, 255, 255, 0.45); /* 半透明白色，不遮挡下方画面 */
   stroke: var(--primary);
-  stroke-width: 1.2px;
-  cursor: move;
+  stroke-width: 0.75px; /* 线宽缩小一半 */
+  cursor: pointer; /* 恢复为指针样式，不使用十字箭头 */
   transition: all 0.15s ease;
 }
 
 .svg-point:hover {
-  fill: var(--primary);
-  stroke: #fff;
-  r: 5px; /* 悬浮时变大，增强拖拽反馈 */
+  fill: var(--primary); /* 仅高亮填充色，不放大，不变白边 */
 }
 
 .svg-point.active-drag {
-  fill: #8b5cf6;
-  stroke: #fff;
-  r: 5.5px;
+  fill: #8b5cf6; /* 仅高亮填充色，不放大，不变白边 */
 }
 
 .svg-line-temp {
   fill: none; /* 移除未闭合多边形的黑色填充 */
   stroke: var(--primary);
-  stroke-width: 1.5px;
+  stroke-width: 0.75px; /* 线宽缩小一半 */
   stroke-dasharray: 4;
 }
 
 .svg-poly-temp {
   fill: rgba(99, 102, 241, 0.1);
   stroke: var(--primary);
-  stroke-width: 1.5px;
+  stroke-width: 0.75px; /* 线宽缩小一半 */
   stroke-dasharray: 4;
 }
 
 .svg-sam-preview {
   fill: rgba(167, 139, 250, 0.25);
   stroke: #8b5cf6;
-  stroke-width: 2px;
+  stroke-width: 1px; /* 线宽缩小一半 */
   stroke-dasharray: 5 3;
   animation: dash 30s linear infinite;
 }
@@ -1056,12 +1052,8 @@ select:focus {
 
 .prompt-dot {
   stroke: #fff;
-  stroke-width: 1.5px;
-  transition: transform 0.1s;
-}
-
-.prompt-dot:hover {
-  transform: scale(1.2);
+  stroke-width: 0.8px; /* 线宽缩小一半 */
+  pointer-events: none; /* 穿透鼠标事件，防遮挡且彻底消除闪烁 */
 }
 
 .prompt-dot.positive {
@@ -1361,5 +1353,23 @@ select:focus {
   color: var(--text-muted);
   margin-top: 2px;
   word-break: break-all;
+}
+
+.instance-visibility-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.instance-visibility-btn:hover {
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--primary);
 }
 

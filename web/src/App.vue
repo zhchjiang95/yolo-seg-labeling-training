@@ -520,6 +520,7 @@
               <!-- 1. 渲染所有已确定的多边形 -->
               <polygon
                 v-for="(poly, polyIndex) in polygons"
+                v-show="!poly.hidden"
                 :key="'poly-' + polyIndex"
                 :points="poly.points.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
                 class="svg-polygon"
@@ -529,14 +530,14 @@
               />
 
               <!-- 2. 编辑模式下：渲染当前选中的多边形顶点与边中点控制点 -->
-              <g v-if="activeTool === 'edit' && activePolyIndex !== null && polygons[activePolyIndex]">
+              <g v-if="activeTool === 'edit' && activePolyIndex !== null && polygons[activePolyIndex] && !polygons[activePolyIndex].hidden">
                 <!-- 边中点（Midpoint Handles），点击即可自动插入顶点并拖拽，大幅提升标注效率 -->
                 <circle
                   v-for="mid in getMidpoints(polygons[activePolyIndex])"
                   :key="'mid-' + mid.index"
                   :cx="mid.x"
                   :cy="mid.y"
-                  r="2.5"
+                  r="1.5"
                   style="fill: rgba(99, 102, 241, 0.35); stroke: rgba(99, 102, 241, 0.85); stroke-width: 1px; cursor: pointer;"
                   @mousedown.stop="insertPoint($event, activePolyIndex, mid.index, mid.x, mid.y)"
                   title="点击并拖拽以添加点"
@@ -548,7 +549,7 @@
                   :key="'pt-' + ptIndex"
                   :cx="pt[0] * imgNaturalWidth"
                   :cy="pt[1] * imgNaturalHeight"
-                  r="3.5"
+                  r="1.8"
                   class="svg-point"
                   :class="{ 'active-drag': dragInfo && dragInfo.polyIndex === activePolyIndex && dragInfo.ptIndex === ptIndex }"
                   @mousedown.stop="startDragPoint($event, activePolyIndex, ptIndex)"
@@ -588,8 +589,8 @@
                   :key="'draw-pt-' + ptIndex"
                   :cx="pt[0] * imgNaturalWidth"
                   :cy="pt[1] * imgNaturalHeight"
-                  :r="ptIndex === 0 ? 5 : 3"
-                  :style="ptIndex === 0 ? 'fill: rgba(16, 185, 129, 0.65); stroke: #fff; stroke-width: 1.2px; cursor: pointer;' : 'fill: rgba(99, 102, 241, 0.5); stroke: #fff; stroke-width: 1px;'"
+                  :r="ptIndex === 0 ? 2.5 : 1.5"
+                  :style="ptIndex === 0 ? 'fill: rgba(16, 185, 129, 0.65); stroke: #fff; stroke-width: 1px; cursor: pointer;' : 'fill: rgba(99, 102, 241, 0.5); stroke: #fff; stroke-width: 0.8px;'"
                   @click.stop="ptIndex === 0 ? finishDrawing() : null"
                   :title="ptIndex === 0 ? '点击闭合多边形' : ''"
                 />
@@ -610,7 +611,7 @@
                   :key="'prompt-' + idx"
                   :cx="prompt.x"
                   :cy="prompt.y"
-                  r="5"
+                  r="2.5"
                   class="prompt-dot"
                   :class="prompt.label === 1 ? 'positive' : 'negative'"
                   :title="prompt.label === 1 ? '前景正点' : '背景负点'"
@@ -667,15 +668,33 @@
             <div class="instance-label">
               <span class="instance-color-box" :style="{ background: getPolyColor(poly.class_id) }"></span>
               <span style="font-weight: 500;">#{{ idx + 1 }}</span>
-              <select v-model.number="poly.class_id" style="padding: 2px 6px; font-size: 12px; width: 100px; border-radius: 4px; height: 24px;" @click.stopPropagation>
+              <select v-model.number="poly.class_id" style="padding: 2px 4px; font-size: 11px; width: 70px; border-radius: 4px; height: 24px;" @click.stopPropagation>
                 <option v-for="(clsName, clsIdx) in classes" :key="clsIdx" :value="clsIdx">
                   {{ clsName }}
                 </option>
               </select>
             </div>
             
-            <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
               <span style="font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">{{ poly.points.length }} pts</span>
+              
+              <!-- 显隐眼睛图标按钮 -->
+              <button 
+                class="instance-visibility-btn" 
+                :class="{ hidden: poly.hidden }"
+                @click.stop="togglePolygonVisibility(idx)" 
+                :title="poly.hidden ? '显示此实例' : '隐藏此实例并防止误触'"
+              >
+                <svg v-if="!poly.hidden" style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <svg v-else style="width: 14px; height: 14px; color: var(--text-muted);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+              </button>
+
               <button class="file-delete-btn" style="opacity: 1;" @click.stop="deletePolygon(idx)" title="删除此多边形">
                 <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="3 6 5 6 21 6"/>
@@ -1140,6 +1159,9 @@ const getSVGCoords = (e) => {
 };
 
 const handleSVGMouseDown = (e) => {
+  // 如果按住空格键或者正处于平移状态，拒绝右键打点
+  if (spacePressed.value || isPanning.value || activeTool.value === 'pan') return;
+  
   if (e.button === 2 && activeTool.value === 'sam') {
     e.stopPropagation();
     const [x, y] = getSVGCoords(e);
@@ -1150,6 +1172,11 @@ const handleSVGMouseDown = (e) => {
 
 const handleSVGClick = (e) => {
   if (!currentImage.value) return;
+  
+  // 如果正在按住空格键移动画面、处于手形模式、或者刚刚结束拖曳平移，拒绝打点
+  if (spacePressed.value || activeTool.value === 'pan' || isPanning.value) {
+    return;
+  }
   
   if (activeTool.value === 'draw' && e.button === 0) {
     const [px, py] = getSVGCoords(e);
@@ -1280,6 +1307,16 @@ const deletePolygon = (idx) => {
     activePolyIndex.value = null;
   } else if (activePolyIndex.value > idx) {
     activePolyIndex.value--;
+  }
+};
+
+const togglePolygonVisibility = (idx) => {
+  const poly = polygons.value[idx];
+  if (poly) {
+    poly.hidden = !poly.hidden;
+    if (poly.hidden && activePolyIndex.value === idx) {
+      activePolyIndex.value = null;
+    }
   }
 };
 
