@@ -1,5 +1,36 @@
 <template>
   <div class="container">
+    <!-- 全局 Toast 轻提示容器 -->
+    <div class="toast-container">
+      <TransitionGroup name="toast">
+        <div v-for="toast in toasts" :key="toast.id" class="toast-item" :class="toast.type">
+          <!-- 成功 Icon -->
+          <svg v-if="toast.type === 'success'" style="width: 16px; height: 16px; color: var(--success); flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          <!-- 警告 Icon -->
+          <svg v-else-if="toast.type === 'warning'" style="width: 16px; height: 16px; color: var(--warning); flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <!-- 错误 Icon -->
+          <svg v-else-if="toast.type === 'error'" style="width: 16px; height: 16px; color: var(--error); flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+          <!-- 消息/通知 Icon -->
+          <svg v-else style="width: 16px; height: 16px; color: var(--primary); flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>{{ toast.message }}</span>
+        </div>
+      </TransitionGroup>
+    </div>
+
     <!-- 头部：标题与基础状态 -->
     <header>
       <div>
@@ -12,14 +43,54 @@
         <div class="subtitle">面向猪只多边形分割任务的轻量化一站式训练控制台</div>
       </div>
       
-      <!-- 训练状态徽章 -->
-      <div class="status-badge" :class="trainStatus.state">
-        <span class="dot" :class="{ active: trainStatus.state === 'training' || trainStatus.state === 'preparing' }"></span>
-        {{ stateLabels[trainStatus.state] || '未知状态' }}
+      <!-- 头部右侧动作组：状态徽章、Tab 与 主题 -->
+      <div style="display: flex; align-items: center; gap: 16px;">
+        <div v-if="currentTab === 'train'" class="status-badge" :class="trainStatus.state">
+          <span class="dot" :class="{ active: trainStatus.state === 'training' || trainStatus.state === 'preparing' }"></span>
+          {{ stateLabels[trainStatus.state] || '未知状态' }}
+        </div>
+        
+        <button class="theme-toggle-btn" @click="toggleTheme" title="切换主题">
+          <!-- 亮色下显示月亮 -->
+          <svg v-if="!isDark" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <!-- 暗色下显示太阳 -->
+          <svg v-else style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+        </button>
       </div>
     </header>
 
-    <div class="main-grid">
+    <!-- TAB 导航栏 -->
+    <div class="nav-tabs">
+      <div class="tab-item" :class="{ active: currentTab === 'train' }" @click="currentTab = 'train'">
+        <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+        </svg>
+        训练大屏
+      </div>
+      <div class="tab-item" :class="{ active: currentTab === 'label' }" @click="currentTab = 'label'">
+        <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+        </svg>
+        数据标注平台
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TAB 1: 训练大屏                               -->
+    <!-- ========================================== -->
+    <div v-if="currentTab === 'train'" class="main-grid">
       <!-- 左侧：参数配置区域 -->
       <div class="glass-card">
         <div class="section-title">
@@ -200,13 +271,16 @@
               </div>
             </div>
             <div class="sys-info-item">
-              <div class="sys-info-label">数据集压缩包</div>
+              <div class="sys-info-label">数据集状态</div>
               <div class="sys-info-val" :style="{ color: sysInfo.dataset_status === 'ready' ? 'var(--success)' : 'var(--error)' }">
                 {{ sysInfo.dataset_status === 'ready' ? '就绪' : '缺失' }}
               </div>
             </div>
           </div>
-          <div v-if="sysInfo.gpu_available && sysInfo.gpu_name !== 'N/A'" class="form-desc" style="text-align: center; margin-top: 10px;">
+          <div class="form-desc" style="text-align: center; margin-top: 10px;">
+            数据源: {{ sysInfo.dataset_path }}
+          </div>
+          <div v-if="sysInfo.gpu_available && sysInfo.gpu_name !== 'N/A'" class="form-desc" style="text-align: center; margin-top: 5px;">
             检测到显卡: {{ sysInfo.gpu_name }}
           </div>
         </div>
@@ -281,13 +355,340 @@
         </div>
       </div>
     </div>
+
+    <!-- ========================================== -->
+    <!-- TAB 2: 数据标注平台                           -->
+    <!-- ========================================== -->
+    <div v-else class="annotator-grid">
+      <!-- 1. 左栏：图片管理 -->
+      <div class="glass-card file-list-card">
+        <div class="section-title" style="margin-bottom: 12px; font-size: 16px;">
+          待标图集列表
+        </div>
+        
+        <!-- 搜索 -->
+        <div class="file-search-box">
+          <input type="text" v-model="searchQuery" placeholder="搜索图片文件名..." style="padding: 8px 12px; font-size: 13px;" />
+        </div>
+
+        <!-- 点击/拖拽上传 -->
+        <div class="upload-area" @click="triggerUpload" @dragover.prevent @drop.prevent="handleFileDrop">
+          <svg style="width: 20px; height: 20px; margin: 0 auto 6px; display: block;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+          </svg>
+          点击或拖入 JPG/PNG 图片
+          <input type="file" ref="uploadInputRef" style="display: none;" multiple accept="image/*" @change="handleFileUpload" />
+        </div>
+
+        <!-- 图片列表 -->
+        <div class="file-list-container">
+          <div v-if="filteredImageList.length === 0" style="text-align: center; color: var(--text-muted); font-size: 13px; margin-top: 20px;">
+            暂无图片
+          </div>
+          <div v-for="img in filteredImageList" :key="img.name" class="file-item" :class="{ active: currentImage && currentImage.name === img.name }" @click="selectImage(img)">
+            <div style="display: flex; align-items: center; gap: 8px; overflow: hidden; width: 85%;">
+              <span class="status-dot" :class="img.labeled ? 'labeled' : 'unlabeled'" :title="img.labeled ? '已标注' : '未标注'"></span>
+              <span class="file-item-name" :title="img.name">{{ img.name }}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 10px; color: var(--text-muted);">{{ img.size_kb }}K</span>
+              <button class="file-delete-btn" @click="deleteImage(img.name, $event)" title="删除图片">
+                <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. 中栏：标注主画布 -->
+      <div class="glass-card canvas-card">
+        <!-- 标注控制工具栏 -->
+        <div class="canvas-toolbar">
+          <!-- 工具模式选择 -->
+          <div style="display: flex; gap: 6px;">
+            <button class="tool-btn" :class="{ active: activeTool === 'edit' }" @click="setTool('edit')" title="选择/调整多边形及顶点">
+              <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 15 13 9 17 5 3"/>
+              </svg>
+              编辑模式
+            </button>
+            <button class="tool-btn" :class="{ active: activeTool === 'draw' }" @click="setTool('draw')" title="点击图片手动打点，双击闭合多边形">
+              <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              </svg>
+              手动打点
+            </button>
+            <button class="tool-btn" :class="{ active: activeTool === 'sam' }" @click="setTool('sam')" title="SAM辅助：左键正点(目标)，右键负点(排除)，Enter确认">
+              <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+              </svg>
+              SAM辅助
+            </button>
+            <button class="tool-btn" :class="{ active: activeTool === 'pan' }" @click="setTool('pan')" title="手形：左键拖拽平移图片">
+              <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 10V8a7 7 0 0 1 14 0v2M12 3v5"/>
+              </svg>
+              手形拖拽
+            </button>
+          </div>
+
+          <!-- 自动识别与清除保存 -->
+          <div style="display: flex; gap: 8px;">
+            <!-- 一键模型识别悬停下拉列表 -->
+            <div class="dropdown-wrapper">
+              <button class="tool-btn" :disabled="!currentImage || isAutoDetecting" style="border-color: var(--success); color: var(--success);" title="鼠标悬浮选择模型识别全图">
+                <span v-if="isAutoDetecting" class="status-dot active" style="margin-right: 4px;"></span>
+                <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 6v6l4 2"/>
+                </svg>
+                一键模型识别
+                <svg style="width: 8px; height: 8px; margin-left: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </button>
+              
+              <!-- 悬浮下拉菜单 -->
+              <div class="dropdown-menu">
+                <div class="dropdown-header-title">选择识别权重</div>
+                <div class="dropdown-list-scroller">
+                  <!-- 默认最佳模型 -->
+                  <button class="dropdown-item" @click="autoDetect(null)" :disabled="isAutoDetecting">
+                    <span style="font-weight: 600; color: var(--primary);">使用系统默认权重</span>
+                    <span class="dropdown-item-path">自动寻找 runs/best.pt 或者是 yolo26s-seg.pt</span>
+                  </button>
+                  <!-- 扫描出来的模型 -->
+                  <button v-for="model in modelsList" :key="model.path" class="dropdown-item" @click="autoDetect(model.path)" :disabled="isAutoDetecting">
+                    <span>{{ model.name }}</span>
+                    <span class="dropdown-item-path">{{ model.path }}</span>
+                  </button>
+                  <div v-if="modelsList.length === 0" style="padding: 10px; text-align: center; font-size: 11px; color: var(--text-muted);">
+                    无其它权重文件 (.pt)
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button class="tool-btn" @click="clearPolygons" :disabled="polygons.length === 0" title="清空当前图片所有多边形">
+              清空
+            </button>
+            <button class="tool-btn active" @click="saveAnnotations" :disabled="!currentImage" style="background: var(--primary-gradient);">
+              保存标注
+            </button>
+          </div>
+        </div>
+
+        <!-- 标注操作提示语 -->
+        <div v-if="currentImage" style="background: rgba(99,102,241,0.06); padding: 8px 12px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; border-left: 3px solid var(--primary);">
+          <span v-if="activeTool === 'edit'">💡 <strong>编辑模式</strong>: 点击多边形选中，拖动顶点微调；拖动边线上的<strong>半透明中点</strong>可直接插入新顶点并拖动；双击顶点删除该点；按 Delete 键删除选中多边形。</span>
+          <span v-else-if="activeTool === 'draw'">✏️ <strong>手动打点</strong>: 鼠标左键在猪只边缘点击，绘制多边形轮廓。双击，或再次点击<strong>第一个点</strong>可闭合多边形完成创建。Esc 取消。</span>
+          <span v-else-if="activeTool === 'sam'">🔮 <strong>SAM智能辅助</strong>: 鼠标<strong>左键</strong>点击猪只区域生成绿点(指明前景)，<strong>右键</strong>点击背景生成红点(排除背景)。实时生成紫色预览虚线，满意后按 <strong>Enter 键</strong> 确认转化为多边形，Esc 撤销。</span>
+          <span v-else-if="activeTool === 'pan'">🤚 <strong>手形拖拽</strong>: 按住鼠标左键并移动可以自由平移画布。在任何模式下，<strong>滚动鼠标滚轮</strong>均可缩放画布，<strong>按住空格键</strong>或使用<strong>鼠标右键拖动</strong>也可以随时平移。</span>
+        </div>
+
+        <!-- 画布核心工作区 -->
+        <div class="canvas-workspace" :class="{ 'draw-mode': activeTool === 'draw', 'panning': activeTool === 'pan' || spacePressed || rightMouseDown }" @wheel.prevent="handleZoom" @mousedown="startPan" @contextmenu.prevent>
+          <div v-if="!currentImage" style="color: var(--text-muted); text-align: center; font-size: 14px; margin-top: 10%;">
+            请在左侧列表中选择一张图片开始标注
+          </div>
+          
+          <!-- 图片与 SVG 渲染包裹器，绑定平移和缩放 -->
+          <div v-else class="canvas-container" :style="{ transform: `translate(${panX}px, ${panY}px) scale(${zoom})` }">
+            <img :src="currentImageSrc" class="canvas-img" @load="onImageLoad" />
+            
+            <!-- SVG 多边形编辑渲染图层，像素级 viewBox 同步 -->
+            <svg :viewBox="`0 0 ${imgNaturalWidth} ${imgNaturalHeight}`" class="svg-overlay" @mousedown="handleSVGMouseDown" @click="handleSVGClick">
+              <!-- 1. 渲染所有已确定的多边形 -->
+              <polygon
+                v-for="(poly, polyIndex) in polygons"
+                :key="'poly-' + polyIndex"
+                :points="poly.points.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
+                class="svg-polygon"
+                :class="{ active: activePolyIndex === polyIndex }"
+                :style="{ fill: getPolyColor(poly.class_id) + '22', stroke: getPolyColor(poly.class_id) }"
+                @mousedown.stop="selectPolygon(polyIndex)"
+              />
+
+              <!-- 2. 编辑模式下：渲染当前选中的多边形顶点与边中点控制点 -->
+              <g v-if="activeTool === 'edit' && activePolyIndex !== null && polygons[activePolyIndex]">
+                <!-- 边中点（Midpoint Handles），点击即可自动插入顶点并拖拽，大幅提升标注效率 -->
+                <circle
+                  v-for="mid in getMidpoints(polygons[activePolyIndex])"
+                  :key="'mid-' + mid.index"
+                  :cx="mid.x"
+                  :cy="mid.y"
+                  r="3.5"
+                  style="fill: rgba(99, 102, 241, 0.7); stroke: #fff; stroke-width: 1px; cursor: pointer;"
+                  @mousedown.stop="insertPoint($event, activePolyIndex, mid.index, mid.x, mid.y)"
+                  title="点击并拖拽以添加点"
+                />
+
+                <!-- 真实的多边形顶点 -->
+                <circle
+                  v-for="(pt, ptIndex) in polygons[activePolyIndex].points"
+                  :key="'pt-' + ptIndex"
+                  :cx="pt[0] * imgNaturalWidth"
+                  :cy="pt[1] * imgNaturalHeight"
+                  r="5"
+                  class="svg-point"
+                  :class="{ 'active-drag': dragInfo && dragInfo.polyIndex === activePolyIndex && dragInfo.ptIndex === ptIndex }"
+                  @mousedown.stop="startDragPoint($event, activePolyIndex, ptIndex)"
+                  @dblclick.stop="deletePoint(activePolyIndex, ptIndex)"
+                  title="双击删除此点"
+                />
+              </g>
+
+              <!-- 3. 手动绘制模式下：绘制临时点、连线和未闭合的多边形 -->
+              <g v-if="activeTool === 'draw' && activePolygonPoints.length > 0">
+                <!-- 临时绘制预览多边形 -->
+                <polyline
+                  :points="activePolygonPoints.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
+                  class="svg-line-temp"
+                />
+                <!-- 鼠标当前位置到最后一个点的虚线 -->
+                <line
+                  v-if="mousePos"
+                  :x1="activePolygonPoints[activePolygonPoints.length - 1][0] * imgNaturalWidth"
+                  :y1="activePolygonPoints[activePolygonPoints.length - 1][1] * imgNaturalHeight"
+                  :x2="mousePos[0]"
+                  :y2="mousePos[1]"
+                  class="svg-line-temp"
+                />
+                <!-- 首尾虚线连线预览闭合效果 -->
+                <line
+                  v-if="activePolygonPoints.length >= 2"
+                  :x1="activePolygonPoints[0][0] * imgNaturalWidth"
+                  :y1="activePolygonPoints[0][1] * imgNaturalHeight"
+                  :x2="activePolygonPoints[activePolygonPoints.length - 1][0] * imgNaturalWidth"
+                  :y2="activePolygonPoints[activePolygonPoints.length - 1][1] * imgNaturalHeight"
+                  style="stroke: var(--primary); stroke-width: 1px; stroke-dasharray: 2 4; opacity: 0.6;"
+                />
+                <!-- 绘制的控制点圆圈 -->
+                <circle
+                  v-for="(pt, ptIndex) in activePolygonPoints"
+                  :key="'draw-pt-' + ptIndex"
+                  :cx="pt[0] * imgNaturalWidth"
+                  :cy="pt[1] * imgNaturalHeight"
+                  :r="ptIndex === 0 ? 6 : 4"
+                  :style="ptIndex === 0 ? 'fill: var(--success); stroke: #fff; stroke-width: 1.5px; cursor: pointer;' : 'fill: var(--primary); stroke: #fff; stroke-width: 1px;'"
+                  @click.stop="ptIndex === 0 ? finishDrawing() : null"
+                  :title="ptIndex === 0 ? '点击闭合多边形' : ''"
+                />
+              </g>
+
+              <!-- 4. SAM 辅助模式下：渲染交互正/负打点以及自动识别预览 -->
+              <g v-if="activeTool === 'sam'">
+                <!-- SAM 预测预览多边形（动态流动虚线效果，超科技感） -->
+                <polygon
+                  v-if="samPreviewPolygon"
+                  :points="samPreviewPolygon.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
+                  class="svg-sam-preview"
+                />
+                
+                <!-- 渲染用户的正负提示点 -->
+                <circle
+                  v-for="(prompt, idx) in samPrompts"
+                  :key="'prompt-' + idx"
+                  :cx="prompt.x"
+                  :cy="prompt.y"
+                  r="5"
+                  class="prompt-dot"
+                  :class="prompt.label === 1 ? 'positive' : 'negative'"
+                  :title="prompt.label === 1 ? '前景正点' : '背景负点'"
+                />
+              </g>
+            </svg>
+          </div>
+
+          <!-- 缩放指示器 -->
+          <div v-if="currentImage" class="zoom-indicator">
+            Zoom: {{ Math.round(zoom * 100) }}% | W:{{ imgNaturalWidth }} H:{{ imgNaturalHeight }}
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 右栏：类别与实例管理 -->
+      <div class="glass-card right-sidebar-card">
+        <!-- 类别定义 -->
+        <div class="class-list-container">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <span style="font-weight: 600; font-size: 14px; color: var(--text-primary);">分类标签管理</span>
+            <button class="console-btn" @click="addClass" style="font-size: 11px; padding: 2px 6px;">+ 新增</button>
+          </div>
+          <div class="class-badge-group">
+            <div
+              v-for="(clsName, idx) in classes"
+              :key="idx"
+              class="class-badge"
+              :class="{ active: activeClassIndex === idx }"
+              @click="activeClassIndex = idx"
+            >
+              <span :style="{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: getPolyColor(idx), marginRight: '6px' }"></span>
+              {{ clsName }}
+            </div>
+          </div>
+        </div>
+
+        <!-- 当前标注实例列表 -->
+        <div class="section-title" style="margin-bottom: 12px; font-size: 14px; border-left-color: var(--success);">
+          当前图像实例 ({{ polygons.length }})
+        </div>
+
+        <div class="instance-list-container">
+          <div v-if="polygons.length === 0" style="text-align: center; color: var(--text-muted); font-size: 13px; margin-top: 30px;">
+            暂无标注多边形
+          </div>
+          <div
+            v-for="(poly, idx) in polygons"
+            :key="'inst-' + idx"
+            class="instance-item"
+            :class="{ active: activePolyIndex === idx }"
+            @click="selectPolygon(idx)"
+          >
+            <div class="instance-label">
+              <span class="instance-color-box" :style="{ background: getPolyColor(poly.class_id) }"></span>
+              <span style="font-weight: 500;">#{{ idx + 1 }}</span>
+              <select v-model.number="poly.class_id" style="padding: 2px 6px; font-size: 12px; width: 100px; border-radius: 4px; height: 24px;" @click.stopPropagation>
+                <option v-for="(clsName, clsIdx) in classes" :key="clsIdx" :value="clsIdx">
+                  {{ clsName }}
+                </option>
+              </select>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">{{ poly.points.length }} pts</span>
+              <button class="file-delete-btn" style="opacity: 1;" @click.stop="deletePolygon(idx)" title="删除此多边形">
+                <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 快捷操作区 -->
+        <div style="margin-top: 16px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+          <!-- 键盘快捷键引导 -->
+          <div style="font-size: 11px; color: var(--text-muted); line-height: 1.5;">
+            <div>⌨️ <strong>快捷键引导：</strong></div>
+            <div>• <kbd>Enter</kbd> : 闭合手动连线 / 确认SAM生成</div>
+            <div>• <kbd>Esc</kbd> : 取消手动连线 / 撤销SAM的点击点</div>
+            <div>• <kbd>Delete / Backspace</kbd> : 删除选中的多边形</div>
+            <div>• <kbd>空格键</kbd> : 按住后左键拖拽可随时平移画布</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 
-// 动态检测后端接口，开发环境指向 8000 端口，生产环境使用同源
+// 动态检测后端接口，开发环境指向 9523，生产环境同源
 const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:9523'
   : window.location.origin;
@@ -295,14 +696,34 @@ const API_BASE = window.location.hostname === 'localhost' || window.location.hos
 // 状态文字映射表
 const stateLabels = {
   idle: '等待训练',
-  preparing: '正在解压并随机划分数据集',
+  preparing: '正在准备数据集（数据划分）',
   training: 'YOLO 训练进行中',
   completed: '训练成功结束',
   failed: '训练异常退出',
   stopped: '已手动终止训练'
 };
 
-// 默认表单参数
+// ==========================================
+// 全局 Toast 轻提示系统逻辑
+// ==========================================
+const toasts = ref([]);
+let toastIdCount = 0;
+
+const showToast = (message, type = 'info') => {
+  const id = toastIdCount++;
+  toasts.value.push({ id, message, type });
+  setTimeout(() => {
+    toasts.value = toasts.value.filter(t => t.id !== id);
+  }, 3000);
+};
+
+// ==========================================
+// 1. 训练控制台状态与逻辑
+// ==========================================
+
+const currentTab = ref('train'); // train | label
+const isDark = ref(false); // 默认浅色模式
+
 const form = reactive({
   epochs: 300,
   batch: 4,
@@ -319,7 +740,6 @@ const form = reactive({
   degrees: 180.0
 });
 
-// 系统负载及数据集状态
 const sysInfo = reactive({
   cpu_percent: 0,
   memory_percent: 0,
@@ -332,7 +752,6 @@ const sysInfo = reactive({
   dataset_path: ''
 });
 
-// 训练器进度和状态
 const trainStatus = reactive({
   state: 'idle',
   progress: {
@@ -357,12 +776,10 @@ let statusInterval = null;
 let sysInfoInterval = null;
 let eventSource = null;
 
-// 快速判断是否正在处于活跃的训练状态
 const isTraining = computed(() => {
   return trainStatus.state === 'training' || trainStatus.state === 'preparing';
 });
 
-// 定时获取系统信息
 const fetchSysInfo = async () => {
   try {
     const res = await fetch(`${API_BASE}/api/sysinfo`);
@@ -375,22 +792,16 @@ const fetchSysInfo = async () => {
   }
 };
 
-// 定时获取训练状态和进度
 const fetchTrainStatus = async () => {
   try {
     const res = await fetch(`${API_BASE}/api/status`);
     if (res.ok) {
       const data = await res.json();
-      
-      const prevState = trainStatus.state;
       Object.assign(trainStatus, data);
       
-      // 如果状态从其他转变为 training/preparing，或者 eventSource 未创建，启动 SSE 接收日志
       if (isTraining.value && !eventSource) {
         startLogStream();
       }
-      
-      // 如果训练刚好结束，关闭 SSE 并进行最终数据更新
       if (!isTraining.value && eventSource) {
         closeLogStream();
       }
@@ -400,32 +811,25 @@ const fetchTrainStatus = async () => {
   }
 };
 
-// 启动实时日志 SSE 推送
 const startLogStream = () => {
   if (eventSource) return;
-  
   console.log('启动 SSE 实时日志接收...');
   eventSource = new EventSource(`${API_BASE}/api/logs`);
-  
   eventSource.onmessage = (event) => {
-    // 过滤掉 SSE 空心跳，添加至页面控制台
     if (event.data.trim()) {
       logs.value.push(event.data);
-      // 保持控制台最新日志行数不超过 1000 行，防溢出崩溃
       if (logs.value.length > 1000) {
         logs.value.shift();
       }
       scrollToBottom();
     }
   };
-  
   eventSource.onerror = (err) => {
     console.error('SSE 日志连接异常:', err);
     closeLogStream();
   };
 };
 
-// 关闭实时日志 SSE
 const closeLogStream = () => {
   if (eventSource) {
     console.log('关闭 SSE 实时日志接收...');
@@ -434,66 +838,56 @@ const closeLogStream = () => {
   }
 };
 
-// 启动训练任务
 const handleStartTrain = async () => {
   try {
     clearLogs();
-    logs.value.push('[SYSTEM] 正在向后端请求启动 YOLOv8-seg 实例分割训练...');
-    
+    showToast('正在向后端请求启动 YOLO 训练...', 'info');
+    logs.value.push('[SYSTEM] 正在向后端请求启动 YOLO26s-seg 实例分割训练...');
     const res = await fetch(`${API_BASE}/api/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form)
     });
-    
     if (res.ok) {
       const data = await res.json();
       logs.value.push('[SYSTEM] ' + data.message);
-      // 启动 SSE 接收
+      showToast('训练已成功拉起！', 'success');
       startLogStream();
-      // 立即刷新一次状态
       fetchTrainStatus();
     } else {
       const errData = await res.json();
       logs.value.push(`[SYSTEM] 启动训练失败: ${errData.detail || '未知网络错误'}`);
+      showToast('启动训练失败: ' + (errData.detail || '错误'), 'error');
     }
   } catch (err) {
     logs.value.push(`[SYSTEM] 网络连通错误: ${err.message}`);
+    showToast('无法连接到训练服务器', 'error');
   }
 };
 
-// 停止训练任务
 const handleStopTrain = async () => {
-  if (!confirm('警告：确定要强行中止当前正在运行的训练任务吗？')) {
-    return;
-  }
-  
+  if (!confirm('警告：确定要强行中止当前正在运行的训练任务吗？')) return;
   try {
     logs.value.push('[SYSTEM] 正在发送中止信号...');
-    const res = await fetch(`${API_BASE}/api/stop`, {
-      method: 'POST'
-    });
-    
+    const res = await fetch(`${API_BASE}/api/stop`, { method: 'POST' });
     if (res.ok) {
       const data = await res.json();
       logs.value.push('[SYSTEM] ' + data.message);
+      showToast('训练已手动中止', 'warning');
       closeLogStream();
       fetchTrainStatus();
     } else {
       const errData = await res.json();
       logs.value.push(`[SYSTEM] 停止训练请求失败: ${errData.detail}`);
+      showToast('中止失败: ' + errData.detail, 'error');
     }
   } catch (err) {
     logs.value.push(`[SYSTEM] 无法连接到服务器进行终止: ${err.message}`);
+    showToast('网络连接异常，请重试', 'error');
   }
 };
 
-// 清空日志控制台
-const clearLogs = () => {
-  logs.value = [];
-};
-
-// 控制台自动滚到底部
+const clearLogs = () => { logs.value = []; };
 const scrollToBottom = () => {
   nextTick(() => {
     if (consoleRef.value) {
@@ -502,23 +896,690 @@ const scrollToBottom = () => {
   });
 };
 
+// 主题切换
+const toggleTheme = () => {
+  isDark.value = !isDark.value;
+  localStorage.setItem('theme', isDark.value ? 'dark' : 'light');
+  updateThemeClass();
+};
+
+const updateThemeClass = () => {
+  if (isDark.value) {
+    document.documentElement.classList.add('dark-theme');
+  } else {
+    document.documentElement.classList.remove('dark-theme');
+  }
+};
+
+// ==========================================
+// 2. 数据标注平台状态与核心逻辑
+// ==========================================
+
+const imageList = ref([]);
+const searchQuery = ref('');
+const currentImage = ref(null);
+const activeTool = ref('edit'); // edit | draw | sam | pan
+
+// 类别、多边形与模型列表
+const classes = ref(['pig']);
+const activeClassIndex = ref(0);
+const polygons = ref([]);
+const activePolyIndex = ref(null);
+const modelsList = ref([]); // 后端扫描出的 YOLO-seg 模型列表
+
+// 拖拽与缩水平移状态
+const zoom = ref(1.0);
+const panX = ref(0);
+const panY = ref(0);
+const imgNaturalWidth = ref(800);
+const imgNaturalHeight = ref(600);
+
+const spacePressed = ref(false);
+const rightMouseDown = ref(false);
+const panStart = ref({ x: 0, y: 0 });
+const isPanning = ref(false);
+
+const uploadInputRef = ref(null);
+
+// 手动绘制临时点
+const activePolygonPoints = ref([]); // 归一化坐标列表
+const mousePos = ref(null); // 绝对像素坐标点
+
+// SAM 预测交互点与预览
+const samPrompts = ref([]); // {x, y, label} 绝对像素点
+const samPreviewPolygon = ref(null); // 归一化坐标点数组
+const isAutoDetecting = ref(false);
+const isSamPredicting = ref(false);
+
+// 颜色映射系统
+const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6', '#3b82f6', '#14b8a6', '#06b6d4'];
+const getPolyColor = (classId) => {
+  return colors[classId % colors.length];
+};
+
+// 图片源 URL
+const currentImageSrc = computed(() => {
+  if (!currentImage.value) return '';
+  return `${API_BASE}/labeling_images/${currentImage.value.name}?t=${currentImage.value.mtime}`;
+});
+
+// 筛选后的图片列表
+const filteredImageList = computed(() => {
+  if (!searchQuery.value) return imageList.value;
+  const q = searchQuery.value.toLowerCase();
+  return imageList.value.filter(img => img.name.toLowerCase().includes(q));
+});
+
+// 获取待标图片列表
+const fetchImageList = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/images`);
+    if (res.ok) {
+      imageList.value = await res.json();
+    }
+  } catch (err) {
+    console.error('获取图片列表失败:', err);
+  }
+};
+
+// 获取可用检测模型列表
+const fetchModelsList = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/models`);
+    if (res.ok) {
+      modelsList.value = await res.json();
+    }
+  } catch (err) {
+    console.error('获取权重列表失败:', err);
+  }
+};
+
+// 选定并加载某张图片的数据
+const selectImage = async (img) => {
+  currentImage.value = img;
+  polygons.value = [];
+  activePolyIndex.value = null;
+  activePolygonPoints.value = [];
+  samPrompts.value = [];
+  samPreviewPolygon.value = null;
+  
+  // 重置缩放和平移
+  zoom.value = 1.0;
+  panX.value = 0;
+  panY.value = 0;
+  
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/labels/${img.name}`);
+    if (res.ok) {
+      const data = await res.json();
+      classes.value = data.classes || ['pig'];
+      polygons.value = data.polygons || [];
+    }
+  } catch (err) {
+    console.error('加载标注失败:', err);
+  }
+};
+
+// 图像加载完成获取实际分辨率
+const onImageLoad = (e) => {
+  imgNaturalWidth.value = e.target.naturalWidth || 800;
+  imgNaturalHeight.value = e.target.naturalHeight || 600;
+};
+
+// 设置当前使用工具
+const setTool = (tool) => {
+  activeTool.value = tool;
+  activePolyIndex.value = null;
+  activePolygonPoints.value = [];
+  samPrompts.value = [];
+  samPreviewPolygon.value = null;
+};
+
+// ==========================================
+// 3. 画布事件（Pan & Zoom 缩放和平移）
+// ==========================================
+
+const handleZoom = (e) => {
+  if (!currentImage.value) return;
+  const zoomFactor = 1.1;
+  const oldZoom = zoom.value;
+  
+  if (e.deltaY < 0) {
+    zoom.value = Math.min(8.0, oldZoom * zoomFactor);
+  } else {
+    zoom.value = Math.max(0.15, oldZoom / zoomFactor);
+  }
+  
+  const container = e.currentTarget.querySelector('.canvas-container');
+  if (container) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    const imgX = (mouseX - panX.value) / oldZoom;
+    const imgY = (mouseY - panY.value) / oldZoom;
+    
+    panX.value = mouseX - imgX * zoom.value;
+    panY.value = mouseY - imgY * zoom.value;
+  }
+};
+
+const startPan = (e) => {
+  if (!currentImage.value) return;
+  
+  if (activeTool.value === 'pan' || spacePressed.value || e.button === 2) {
+    e.preventDefault();
+    isPanning.value = true;
+    if (e.button === 2) {
+      rightMouseDown.value = true;
+    }
+    
+    panStart.value = {
+      x: e.clientX - panX.value,
+      y: e.clientY - panY.value
+    };
+    
+    window.addEventListener('mousemove', handlePan);
+    window.addEventListener('mouseup', stopPan);
+  }
+};
+
+const handlePan = (e) => {
+  if (!isPanning.value) return;
+  panX.value = e.clientX - panStart.value.x;
+  panY.value = e.clientY - panStart.value.y;
+};
+
+const stopPan = (e) => {
+  isPanning.value = false;
+  rightMouseDown.value = false;
+  window.removeEventListener('mousemove', handlePan);
+  window.removeEventListener('mouseup', stopPan);
+};
+
+// ==========================================
+// 4. SVG 画布坐标转换与标注绘制交互
+// ==========================================
+
+const getSVGCoords = (e) => {
+  const svg = document.querySelector('.svg-overlay');
+  if (!svg) return [0, 0];
+  const rect = svg.getBoundingClientRect();
+  const x = ((e.clientX - rect.left) / rect.width) * imgNaturalWidth.value;
+  const y = ((e.clientY - rect.top) / rect.height) * imgNaturalHeight.value;
+  return [x, y];
+};
+
+const handleSVGMouseDown = (e) => {
+  if (e.button === 2 && activeTool.value === 'sam') {
+    e.stopPropagation();
+    const [x, y] = getSVGCoords(e);
+    samPrompts.value.push({ x, y, label: 0 }); // 0: 负点（背景）
+    triggerSAMPredict();
+  }
+};
+
+const handleSVGClick = (e) => {
+  if (!currentImage.value) return;
+  
+  if (activeTool.value === 'draw' && e.button === 0) {
+    const [px, py] = getSVGCoords(e);
+    const normX = px / imgNaturalWidth.value;
+    const normY = py / imgNaturalHeight.value;
+    
+    if (activePolygonPoints.value.length >= 3) {
+      const first = activePolygonPoints.value[0];
+      const dist = Math.hypot(normX - first[0], normY - first[1]);
+      if (dist < 0.015) {
+        finishDrawing();
+        return;
+      }
+    }
+    
+    activePolygonPoints.value.push([normX, normY]);
+  }
+  
+  else if (activeTool.value === 'sam' && e.button === 0) {
+    const [x, y] = getSVGCoords(e);
+    samPrompts.value.push({ x, y, label: 1 }); // 1: 正点（前景）
+    triggerSAMPredict();
+  }
+};
+
+const updateMousePos = (e) => {
+  if (activeTool.value === 'draw' && activePolygonPoints.value.length > 0) {
+    const [x, y] = getSVGCoords(e);
+    mousePos.value = [x, y];
+  } else {
+    mousePos.value = null;
+  }
+};
+
+const finishDrawing = () => {
+  if (activePolygonPoints.value.length >= 3) {
+    polygons.value.push({
+      class_id: activeClassIndex.value,
+      points: [...activePolygonPoints.value]
+    });
+  }
+  activePolygonPoints.value = [];
+};
+
+// ==========================================
+// 5. 多边形编辑模式 (拖拽与中点插入)
+// ==========================================
+
+const selectPolygon = (idx) => {
+  if (activeTool.value === 'edit') {
+    activePolyIndex.value = idx;
+  }
+};
+
+const getMidpoints = (poly) => {
+  if (!poly || !poly.points || poly.points.length < 2) return [];
+  const list = [];
+  const pts = poly.points;
+  for (let i = 0; i < pts.length; i++) {
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % pts.length];
+    
+    const mx = (p1[0] + p2[0]) / 2;
+    const my = (p1[1] + p2[1]) / 2;
+    list.push({
+      index: i,
+      x: mx * imgNaturalWidth.value,
+      y: my * imgNaturalHeight.value
+    });
+  }
+  return list;
+};
+
+const insertPoint = (e, polyIndex, index, px, py) => {
+  const normX = px / imgNaturalWidth.value;
+  const normY = py / imgNaturalHeight.value;
+  
+  polygons.value[polyIndex].points.splice(index + 1, 0, [normX, normY]);
+  activePolyIndex.value = polyIndex;
+  startDragPoint(e, polyIndex, index + 1);
+};
+
+const dragInfo = ref(null);
+
+const startDragPoint = (e, polyIndex, ptIndex) => {
+  e.preventDefault();
+  dragInfo.value = {
+    polyIndex,
+    ptIndex,
+    startX: e.clientX,
+    startY: e.clientY
+  };
+  window.addEventListener('mousemove', handleDragPoint);
+  window.addEventListener('mouseup', stopDragPoint);
+};
+
+const handleDragPoint = (e) => {
+  if (!dragInfo.value) return;
+  const { polyIndex, ptIndex } = dragInfo.value;
+  
+  const [x, y] = getSVGCoords(e);
+  const cx = Math.max(0, Math.min(imgNaturalWidth.value, x));
+  const cy = Math.max(0, Math.min(imgNaturalHeight.value, y));
+  
+  polygons.value[polyIndex].points[ptIndex] = [
+    cx / imgNaturalWidth.value,
+    cy / imgNaturalHeight.value
+  ];
+};
+
+const stopDragPoint = () => {
+  dragInfo.value = null;
+  window.removeEventListener('mousemove', handleDragPoint);
+  window.removeEventListener('mouseup', stopDragPoint);
+};
+
+const deletePoint = (polyIndex, ptIndex) => {
+  if (polygons.value[polyIndex].points.length <= 3) {
+    deletePolygon(polyIndex);
+  } else {
+    polygons.value[polyIndex].points.splice(ptIndex, 1);
+  }
+};
+
+const deletePolygon = (idx) => {
+  polygons.value.splice(idx, 1);
+  if (activePolyIndex.value === idx) {
+    activePolyIndex.value = null;
+  } else if (activePolyIndex.value > idx) {
+    activePolyIndex.value--;
+  }
+};
+
+const clearPolygons = () => {
+  if (confirm('确认清空当前图片上的所有标注多边形吗？')) {
+    polygons.value = [];
+    activePolyIndex.value = null;
+    showToast('已清空标注多边形', 'info');
+  }
+};
+
+// ==========================================
+// 6. 模型自动检测与 SAM 点击预测
+// ==========================================
+
+const autoDetect = async (modelPath = null) => {
+  if (!currentImage.value) return;
+  isAutoDetecting.value = true;
+  showToast(modelPath ? '正在加载自定义模型识别中...' : '正在加载默认模型识别中...', 'info');
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/auto_detect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        name: currentImage.value.name,
+        model_path: modelPath
+      })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.polygons) {
+        polygons.value = data.polygons;
+        activePolyIndex.value = null;
+        showToast(`自动识别成功！共检测到 ${data.polygons.length} 个实例。`, 'success');
+      }
+    } else {
+      const err = await res.json();
+      showToast('自动检测失败: ' + (err.detail || '模型加载出错'), 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('连接识别服务异常', 'error');
+  } finally {
+    isAutoDetecting.value = false;
+  }
+};
+
+const triggerSAMPredict = async () => {
+  if (samPrompts.value.length === 0 || !currentImage.value) return;
+  isSamPredicting.value = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/sam_predict`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: currentImage.value.name,
+        points: samPrompts.value.map(p => [p.x, p.y]),
+        labels: samPrompts.value.map(p => p.label)
+      })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.polygons && data.polygons.length > 0) {
+        samPreviewPolygon.value = data.polygons[0];
+      }
+    } else {
+      const err = await res.json();
+      showToast('SAM 推理出错: ' + (err.detail || '未放置 SAM 权重'), 'error');
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    isSamPredicting.value = false;
+  }
+};
+
+const confirmSAM = () => {
+  if (!samPreviewPolygon.value) return;
+  polygons.value.push({
+    class_id: activeClassIndex.value,
+    points: [...samPreviewPolygon.value]
+  });
+  samPrompts.value = [];
+  samPreviewPolygon.value = null;
+  showToast('SAM 实例已确认并创建', 'success');
+};
+
+// ==========================================
+// 7. 图片上传与删除
+// ==========================================
+
+const triggerUpload = () => {
+  if (uploadInputRef.value) {
+    uploadInputRef.value.click();
+  }
+};
+
+const handleFileUpload = async (e) => {
+  const files = e.target.files;
+  if (!files || files.length === 0) return;
+  await uploadFiles(files);
+};
+
+const handleFileDrop = async (e) => {
+  const files = e.dataTransfer.files;
+  if (!files || files.length === 0) return;
+  await uploadFiles(files);
+};
+
+const uploadFiles = async (files) => {
+  const formData = new FormData();
+  let imgCount = 0;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    if (f.type.startsWith('image/')) {
+      formData.append('files', f);
+      imgCount++;
+    }
+  }
+  
+  if (imgCount === 0) return;
+  showToast('开始上传图片...', 'info');
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/upload`, {
+      method: 'POST',
+      body: formData
+    });
+    if (res.ok) {
+      showToast('图片上传成功！', 'success');
+      await fetchImageList();
+      await fetchSysInfo();
+      if (imageList.value.length > 0 && !currentImage.value) {
+        selectImage(imageList.value[0]);
+      }
+    } else {
+      showToast('上传图片失败', 'error');
+    }
+  } catch (err) {
+    console.error('上传图片异常:', err);
+    showToast('网络连接异常', 'error');
+  }
+};
+
+const deleteImage = async (imgName, e) => {
+  if (e) e.stopPropagation();
+  if (!confirm(`确认删除图片 ${imgName} 吗？\n警告：对应的标签文件也会随之物理删除，不可还原！`)) return;
+  
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/image/${imgName}`, {
+      method: 'DELETE'
+    });
+    
+    if (res.ok) {
+      showToast('删除成功', 'success');
+      await fetchImageList();
+      await fetchSysInfo();
+      if (currentImage.value && currentImage.value.name === imgName) {
+        currentImage.value = null;
+        polygons.value = [];
+        activePolyIndex.value = null;
+      }
+    } else {
+      showToast('删除失败', 'error');
+    }
+  } catch (err) {
+    console.error('删除图片失败:', err);
+    showToast('连接服务端失败', 'error');
+  }
+};
+
+// ==========================================
+// 8. 类别与标注数据保存
+// ==========================================
+
+const addClass = async () => {
+  const name = prompt('请输入新添加的类别名称：');
+  if (name && name.trim()) {
+    const trimmed = name.trim();
+    if (!classes.value.includes(trimmed)) {
+      classes.value.push(trimmed);
+      activeClassIndex.value = classes.value.length - 1;
+      
+      try {
+        const res = await fetch(`${API_BASE}/api/labeling/classes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ classes: classes.value })
+        });
+        if (res.ok) {
+          showToast(`已成功添加类别标签: ${trimmed}`, 'success');
+        }
+      } catch (err) {
+        console.error('保存类别失败:', err);
+        showToast('保存类别失败', 'error');
+      }
+    } else {
+      showToast('类别已存在', 'warning');
+    }
+  }
+};
+
+const saveAnnotations = async () => {
+  if (!currentImage.value) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: currentImage.value.name,
+        polygons: polygons.value.map(p => ({
+          class_id: p.class_id,
+          points: p.points
+        }))
+      })
+    });
+    
+    if (res.ok) {
+      const found = imageList.value.find(img => img.name === currentImage.value.name);
+      if (found) found.labeled = polygons.value.length > 0;
+      showToast('标注数据已保存成功！', 'success');
+    } else {
+      showToast('保存标注失败', 'error');
+    }
+  } catch (err) {
+    console.error('保存标注出错:', err);
+    showToast('保存异常，无法连接服务', 'error');
+  }
+};
+
+// ==========================================
+// 9. 键盘事件监听与生命周期绑定
+// ==========================================
+
+const handleKeyDown = (e) => {
+  if (currentTab.value !== 'label') return;
+  
+  if (e.key === ' ') {
+    spacePressed.value = true;
+  } else if (e.key === 'Escape') {
+    if (activeTool.value === 'draw') {
+      activePolygonPoints.value = [];
+    } else if (activeTool.value === 'sam') {
+      samPrompts.value = [];
+      samPreviewPolygon.value = null;
+    }
+  } else if (e.key === 'Enter') {
+    if (activeTool.value === 'draw') {
+      finishDrawing();
+    } else if (activeTool.value === 'sam') {
+      confirmSAM();
+    }
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (activeTool.value === 'edit' && activePolyIndex.value !== null) {
+      deletePolygon(activePolyIndex.value);
+    }
+  }
+};
+
+const handleKeyUp = (e) => {
+  if (e.key === ' ') {
+    spacePressed.value = false;
+  }
+};
+
+const handleMouseMoveGlobal = (e) => {
+  updateMousePos(e);
+};
+
+// 切换 TAB 时刷新数据
+watch(currentTab, (newTab) => {
+  if (newTab === 'label') {
+    fetchImageList();
+    fetchModelsList();
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousemove', handleMouseMoveGlobal);
+  } else {
+    fetchSysInfo();
+    window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('keyup', handleKeyUp);
+    window.removeEventListener('mousemove', handleMouseMoveGlobal);
+  }
+});
+
 onMounted(() => {
-  // 首次拉取
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme === 'dark') {
+    isDark.value = true;
+  } else {
+    isDark.value = false;
+  }
+  updateThemeClass();
+
   fetchSysInfo();
   fetchTrainStatus();
   
-  // 定时器挂载
   statusInterval = setInterval(fetchTrainStatus, 1000);
   sysInfoInterval = setInterval(fetchSysInfo, 3000);
+  
+  if (currentTab.value === 'label') {
+    fetchImageList();
+    fetchModelsList();
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousemove', handleMouseMoveGlobal);
+  }
 });
 
 onUnmounted(() => {
   clearInterval(statusInterval);
   clearInterval(sysInfoInterval);
   closeLogStream();
+  
+  window.removeEventListener('keydown', handleKeyDown);
+  window.removeEventListener('keyup', handleKeyUp);
+  window.removeEventListener('mousemove', handleMouseMoveGlobal);
 });
 </script>
 
 <style scoped>
-/* style.css 为全局设计，此处可为空或加额外补丁 */
+/* 按钮快捷键提示框 */
+kbd {
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 10px;
+}
 </style>
