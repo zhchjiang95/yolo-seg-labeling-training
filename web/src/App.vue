@@ -35,7 +35,7 @@
     <header>
       <div>
         <h1>
-          <svg style="width: 28px; height: 28px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
           </svg>
           YOLO26s-seg 智能分割训练平台
@@ -77,13 +77,13 @@
         <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
         </svg>
-        训练大屏
+        模型训练
       </div>
       <div class="tab-item" :class="{ active: currentTab === 'label' }" @click="currentTab = 'label'">
         <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
         </svg>
-        数据标注平台
+        数据标注
       </div>
     </div>
 
@@ -402,8 +402,7 @@
             <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; flex: 1;">
               <!-- 序号展示 -->
               <span class="file-item-idx" style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); flex-shrink: 0; min-width: 20px;">{{ idx + 1 }}</span>
-              <span class="status-dot" :class="img.labeled ? 'labeled' : 'unlabeled'" :title="img.labeled ? '已标注' : '未标注'"></span>
-              <span class="file-item-name" :title="img.name" style="max-width: 110px;">{{ img.name }}</span>
+              <span class="file-item-name" :title="img.name" style="max-width: 135px;">{{ img.name }}</span>
             </div>
             <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
               <!-- 显式区分文字 Badge -->
@@ -437,19 +436,13 @@
               <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
               </svg>
-              手动打点
+              手动标注
             </button>
             <button class="tool-btn" :class="{ active: activeTool === 'sam' }" @click="setTool('sam')" title="SAM辅助：左键正点(目标)，右键负点(排除)，Enter确认">
               <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
               </svg>
               SAM辅助
-            </button>
-            <button class="tool-btn" :class="{ active: activeTool === 'pan' }" @click="setTool('pan')" title="手形：左键拖拽平移图片">
-              <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M5 10V8a7 7 0 0 1 14 0v2M12 3v5"/>
-              </svg>
-              手形拖拽
             </button>
 
             <!-- 一键模型识别悬停下拉列表 (移到左侧工具组并齐左) -->
@@ -485,6 +478,12 @@
                 </div>
               </div>
             </div>
+            <button class="tool-btn" :class="{ active: activeTool === 'pan' }" @click="setTool('pan')" title="手形：左键拖拽平移图片">
+              <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 10V8a7 7 0 0 1 14 0v2M12 3v5"/>
+              </svg>
+              手形拖拽
+            </button>
           </div>
 
           <!-- 清理与保存动作组 -->
@@ -740,7 +739,7 @@ const showToast = (message, type = 'info') => {
 // ==========================================
 
 const currentTab = ref('train'); // train | label
-const isDark = ref(false); // 默认浅色模式
+const isDark = ref(true); // 默认暗色模式
 
 const form = reactive({
   epochs: 300,
@@ -1091,6 +1090,11 @@ const handleZoom = (e) => {
 
 const startPan = (e) => {
   if (!currentImage.value) return;
+  
+  // 在 SAM 辅助模式下，鼠标右键（e.button === 2）专门用于添加背景点，不触发平移
+  if (activeTool.value === 'sam' && e.button === 2) {
+    return;
+  }
   
   if (activeTool.value === 'pan' || spacePressed.value || e.button === 2) {
     e.preventDefault();
@@ -1564,10 +1568,13 @@ watch(currentTab, (newTab) => {
 
 onMounted(() => {
   const savedTheme = localStorage.getItem('theme');
-  if (savedTheme === 'dark') {
-    isDark.value = true;
-  } else {
+  if (savedTheme === 'light') {
     isDark.value = false;
+  } else {
+    isDark.value = true;
+    if (!savedTheme) {
+      localStorage.setItem('theme', 'dark');
+    }
   }
   updateThemeClass();
 
