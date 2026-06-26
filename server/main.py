@@ -224,10 +224,10 @@ class LabelingPredictor:
                 "sam3.1_multiplex.pt", 
                 "sam3.1.pt", 
                 "sam3.pt", 
-                "sam2_b.pt", 
+                "sam2.1_b.pt", 
                 "sam_b.pt", 
                 "mobile_sam.pt", 
-                "sam2_t.pt"
+                "sam2.1_t.pt"
             ]
             found_path = None
             for name in sam_names:
@@ -236,7 +236,7 @@ class LabelingPredictor:
                     found_path = p
                     break
             if found_path is None:
-                raise FileNotFoundError("未在 models/ 目录下检测到 SAM 权重 (例如 sam3.1_multiplex.pt、sam3.pt、sam2_b.pt、mobile_sam.pt)。")
+                raise FileNotFoundError("未在 models/ 目录下检测到 SAM 权重 (例如 sam3.1_multiplex.pt、sam3.pt、sam2.1_b.pt、mobile_sam.pt)。")
             
             from ultralytics import SAM
             self.sam_model = SAM(str(found_path))
