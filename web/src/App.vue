@@ -363,7 +363,7 @@
       <!-- 1. 左栏：图片管理 -->
       <div class="glass-card file-list-card">
         <div class="section-title" style="margin-bottom: 12px; font-size: 16px;">
-          待标图集列表
+          待标图集列表 ({{ imageList.filter(img => img.labeled).length }}/{{ imageList.length }})
         </div>
         
         <!-- 搜索 -->
@@ -407,9 +407,9 @@
             <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
               <!-- 显式区分文字 Badge -->
               <span class="status-badge-inline" :class="img.labeled ? 'labeled' : 'unlabeled'">
-                {{ img.labeled ? '已标' : '未标' }}
+                {{ img.labeled ? '已标 ' + (img.label_count || 0) + ' 个' : '未标' }}
               </span>
-              <button class="file-delete-btn" @click="deleteImage(img.name, $event)" title="删除图片">
+              <button class="file-item-delete-btn" @click="deleteImage(img.name, $event)" title="删除图片">
                 <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="3 6 5 6 21 6"/>
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -1538,7 +1538,10 @@ const saveAnnotations = async () => {
     
     if (res.ok) {
       const found = imageList.value.find(img => img.name === currentImage.value.name);
-      if (found) found.labeled = polygons.value.length > 0;
+      if (found) {
+        found.labeled = polygons.value.length > 0;
+        found.label_count = polygons.value.length;
+      }
       showToast('标注数据已保存成功！', 'success');
     } else {
       showToast('保存标注失败', 'error');

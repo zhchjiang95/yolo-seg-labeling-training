@@ -792,6 +792,7 @@ select:focus {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s;
+  position: relative; /* 启用相对定位，便于子元素绝对定位 */
 }
 
 .dark-theme .file-item {
@@ -833,8 +834,44 @@ select:focus {
   background: var(--text-muted);
 }
 
-.file-delete-btn {
+.file-item-delete-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   opacity: 0;
+  pointer-events: none;
+  background: #ffffff; /* 亮色下纯白完全遮挡底下文字 */
+  border: 1px solid var(--border-color);
+  color: var(--error);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  z-index: 10;
+}
+
+.dark-theme .file-item-delete-btn {
+  background: #16162a; /* 暗色下深色完全遮挡底下文字 */
+}
+
+.file-item:hover .file-item-delete-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.file-item-delete-btn:hover {
+  background: var(--error);
+  color: #ffffff;
+  border-color: var(--error);
+}
+
+/* 右侧实例列表中的删除按钮 */
+.file-delete-btn {
   background: transparent;
   border: none;
   color: var(--error);
@@ -842,10 +879,9 @@ select:focus {
   padding: 2px;
   border-radius: 4px;
   transition: all 0.2s;
-}
-
-.file-item:hover .file-delete-btn {
-  opacity: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .file-delete-btn:hover {
