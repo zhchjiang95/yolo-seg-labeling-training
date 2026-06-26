@@ -261,12 +261,20 @@ def get_labeling_images():
             label_name = item.stem + ".txt"
             label_path = labels_dir / label_name
             labeled = False
-            if label_path.exists():
-                labeled = label_path.stat().st_size > 0
+            label_count = 0
+            if label_path.exists() and label_path.stat().st_size > 0:
+                try:
+                    with open(label_path, "r", encoding="utf-8") as f:
+                        lines = [line.strip() for line in f if line.strip()]
+                        label_count = len(lines)
+                        labeled = label_count > 0
+                except Exception as e:
+                    print(f"读取 label 文件行数出错 {label_path}: {e}")
             
             result.append({
                 "name": item.name,
                 "labeled": labeled,
+                "label_count": label_count,
                 "size_kb": round(item.stat().st_size / 1024, 1),
                 "mtime": int(item.stat().st_mtime)
             })
