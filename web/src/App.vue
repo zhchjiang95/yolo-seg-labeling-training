@@ -529,18 +529,19 @@
                 @mousedown.stop="selectPolygon(polyIndex)"
               />
 
-              <!-- 2. 编辑模式下：渲染当前选中的多边形顶点与边中点控制点 -->
+              <!-- 2. 编辑模式下：渲染当前选中的多边形顶点与加宽边线 hitbox -->
               <g v-if="activeTool === 'edit' && activePolyIndex !== null && polygons[activePolyIndex] && !polygons[activePolyIndex].hidden">
-                <!-- 边中点（Midpoint Handles），点击即可自动插入顶点并拖拽，大幅提升标注效率 -->
-                <circle
-                  v-for="mid in getMidpoints(polygons[activePolyIndex])"
-                  :key="'mid-' + mid.index"
-                  :cx="mid.x"
-                  :cy="mid.y"
-                  r="1.5"
-                  style="fill: rgba(99, 102, 241, 0.35); stroke: rgba(99, 102, 241, 0.85); stroke-width: 1px; cursor: pointer;"
-                  @mousedown.stop="insertPoint($event, activePolyIndex, mid.index, mid.x, mid.y)"
-                  title="点击并拖拽以添加点"
+                <!-- 加宽隐形边线 hitbox，点击即可在点击处添加新顶点并滑行拖拽微调 -->
+                <line
+                  v-for="line in getPolygonLines(polygons[activePolyIndex])"
+                  :key="'edge-' + line.index"
+                  :x1="line.x1"
+                  :y1="line.y1"
+                  :x2="line.x2"
+                  :y2="line.y2"
+                  class="svg-edge-hitbox"
+                  @mousedown.stop="insertPointOnEdge($event, activePolyIndex, line.index)"
+                  title="在此边上按下鼠标并拖动可直接插入并微调顶点"
                 />
 
                 <!-- 真实的多边形顶点 -->
@@ -1231,32 +1232,32 @@ const selectPolygon = (idx) => {
   }
 };
 
-const getMidpoints = (poly) => {
+const getPolygonLines = (poly) => {
   if (!poly || !poly.points || poly.points.length < 2) return [];
   const list = [];
   const pts = poly.points;
   for (let i = 0; i < pts.length; i++) {
     const p1 = pts[i];
     const p2 = pts[(i + 1) % pts.length];
-    
-    const mx = (p1[0] + p2[0]) / 2;
-    const my = (p1[1] + p2[1]) / 2;
     list.push({
       index: i,
-      x: mx * imgNaturalWidth.value,
-      y: my * imgNaturalHeight.value
+      x1: p1[0] * imgNaturalWidth.value,
+      y1: p1[1] * imgNaturalHeight.value,
+      x2: p2[0] * imgNaturalWidth.value,
+      y2: p2[1] * imgNaturalHeight.value
     });
   }
   return list;
 };
 
-const insertPoint = (e, polyIndex, index, px, py) => {
+const insertPointOnEdge = (e, polyIndex, edgeIndex) => {
+  const [px, py] = getSVGCoords(e);
   const normX = px / imgNaturalWidth.value;
   const normY = py / imgNaturalHeight.value;
   
-  polygons.value[polyIndex].points.splice(index + 1, 0, [normX, normY]);
+  polygons.value[polyIndex].points.splice(edgeIndex + 1, 0, [normX, normY]);
   activePolyIndex.value = polyIndex;
-  startDragPoint(e, polyIndex, index + 1);
+  startDragPoint(e, polyIndex, edgeIndex + 1);
 };
 
 const dragInfo = ref(null);

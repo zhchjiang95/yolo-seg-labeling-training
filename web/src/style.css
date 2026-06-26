@@ -1022,6 +1022,19 @@ select:focus {
   fill: #8b5cf6; /* 仅高亮填充色，不放大，不变白边 */
 }
 
+/* 选中多边形的加宽隐形边线 hitbox */
+.svg-edge-hitbox {
+  stroke: transparent;
+  stroke-width: 6px; /* 6px 宽的隐形热区，既好点击又防误触 */
+  cursor: pointer;
+  vector-effect: non-scaling-stroke; /* 确保缩放时不随之被拉得太大 */
+  transition: stroke 0.15s ease;
+}
+
+.svg-edge-hitbox:hover {
+  stroke: rgba(99, 102, 241, 0.4); /* 鼠标划过时显现淡淡的标记线引导 */
+}
+
 .svg-line-temp {
   fill: none; /* 移除未闭合多边形的黑色填充 */
   stroke: var(--primary);
