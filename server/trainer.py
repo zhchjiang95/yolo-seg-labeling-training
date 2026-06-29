@@ -309,12 +309,13 @@ if __name__ == '__main__':
         """
         正则解析控制台日志，提取指标和训练 Epoch
         """
-        # 1. 尝试匹配 tqdm 进度条的 ETA 信息，形如 "[00:45<02:30, 4.51it/s]"
+        # 1. 尝试匹配 tqdm 进度条的 ETA 信息，形如 "[00:45<02:30, 4.51it/s]" 或 Ultralytics 独特的 "10.0s<50.0s"、"1:15<2:30"
         # 移到最前面，且匹配成功后不 return，以防止在一行同时包含 Epoch 进度和进度条时被提前拦截
-        eta_match = re.search(r'\[([0-9:]+)<([0-9:]+)', line)
+        eta_match = re.search(r'\b([0-9:.]+s?)<([0-9:.]+s?)', line)
         if eta_match:
             with self.lock:
                 self.progress["eta"] = eta_match.group(2)
+
 
         # 2. 尝试匹配训练进度（例如 Epoch 进度）
         # 很多情况下，tqdm 进度条的前面会包含 \r 或者终端控制符，所以用 search 代替 match
