@@ -216,8 +216,11 @@ if __name__ == '__main__':
                     return
                 self.state = "training"
 
-            # 3. 运行子进程执行训练
+            # 3. 运行子进程执行训练，并强制无缓冲输出以实时捕获 tqdm
             self._write_log("[SYSTEM] 启动训练子进程...\n")
+            
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
             
             self.process = subprocess.Popen(
                 [sys.executable, str(self.runner_file)],
@@ -226,13 +229,38 @@ if __name__ == '__main__':
                 text=True,
                 encoding='utf-8',
                 bufsize=1,
-                cwd=str(self.workspace_dir)
+                cwd=str(self.workspace_dir),
+                env=env
             )
 
-            # 4. 逐行读取子进程控制台输出并捕获解析进度
-            for line in iter(self.process.stdout.readline, ""):
+            # 定义实时按字符读取以兼顾 \r 和 \n 的生成器，从而即时捕捉 tqdm 进度条更新
+            def read_lines_realtime(stream):
+                buffer = []
+                prev_char = ""
+                while True:
+                    char = stream.read(1)
+                    if not char:
+                        if buffer:
+                            yield "".join(buffer)
+                        break
+                    
+                    if char == '\n' and prev_char == '\r':
+                        # 如果是紧随 \r 后面的 \n，说明是 \r\n 换行符的后半截，直接忽略
+                        prev_char = char
+                        continue
+                        
+                    if char in ('\r', '\n'):
+                        yield "".join(buffer) + char
+                        buffer = []
+                    else:
+                        buffer.append(char)
+                    prev_char = char
+
+            # 4. 逐行读取子进程控制台输出并捕获解析进度（实时捕捉 \r 和 \n）
+            for line in read_lines_realtime(self.process.stdout):
                 self._write_log(line)
                 self._parse_log_line(line)
+
 
             # 等待子进程执行完毕并获取退出状态码
             self.process.wait()
