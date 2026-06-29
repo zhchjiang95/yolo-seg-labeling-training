@@ -995,9 +995,12 @@ select:focus {
 
 .canvas-container {
   position: absolute;
+  left: 0;
+  top: 0;
   transform-origin: 0 0;
   display: inline-block;
 }
+
 
 .canvas-img {
   display: block;
@@ -1421,4 +1424,23 @@ select:focus {
   background: rgba(99, 102, 241, 0.08);
   color: var(--primary);
 }
+
+/* Loading 旋转动画 */
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: currentColor;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 

@@ -439,11 +439,27 @@
               手动标注
             </button>
             <button class="tool-btn" :class="{ active: activeTool === 'sam' }" @click="setTool('sam')" title="SAM辅助：左键正点(目标)，右键负点(排除)，Enter确认">
-              <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <span v-if="isSamPredicting" class="spinner" style="margin-right: 4px;"></span>
+              <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
               </svg>
               SAM辅助
             </button>
+            <button
+              v-if="activeTool === 'sam'"
+              class="tool-btn"
+              :disabled="!samPreviewPolygon || isSamPredicting"
+              style="background: var(--success); color: #fff; border-color: var(--success);"
+              @click="confirmSAM"
+              title="确认当前 SAM 多边形并保存到实例列表中 (快捷键 Enter)"
+            >
+              <span v-if="isSamPredicting" class="spinner" style="margin-right: 4px;"></span>
+              <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              保持
+            </button>
+
 
             <!-- 一键模型识别悬停下拉列表 (移到左侧工具组并齐左) -->
             <div class="dropdown-wrapper">
@@ -1047,11 +1063,6 @@ const selectImage = async (img) => {
   samPrompts.value = [];
   samPreviewPolygon.value = null;
   
-  // 重置缩放和平移
-  zoom.value = 1.0;
-  panX.value = 0;
-  panY.value = 0;
-  
   try {
     const res = await fetch(`${API_BASE}/api/labeling/labels/${img.name}`);
     if (res.ok) {
@@ -1064,11 +1075,40 @@ const selectImage = async (img) => {
   }
 };
 
-// 图像加载完成获取实际分辨率
+// 图像加载完成获取实际分辨率，并自适应容器宽高进行缩放和居中
 const onImageLoad = (e) => {
-  imgNaturalWidth.value = e.target.naturalWidth || 800;
-  imgNaturalHeight.value = e.target.naturalHeight || 600;
+  const imgW = e.target.naturalWidth || 800;
+  const imgH = e.target.naturalHeight || 600;
+  imgNaturalWidth.value = imgW;
+  imgNaturalHeight.value = imgH;
+  
+  const workspace = document.querySelector('.canvas-workspace');
+  if (workspace) {
+    // 留出 16 像素的安全边距
+    const pad = 16;
+    const containerW = Math.max(100, workspace.clientWidth - pad * 2);
+    const containerH = Math.max(100, workspace.clientHeight - pad * 2);
+    
+    // 计算缩放比，使图片完整包容在容器内
+    const scaleX = containerW / imgW;
+    const scaleY = containerH / imgH;
+    let bestScale = Math.min(scaleX, scaleY);
+    
+    // 限制缩放区间：最小 5%，最大 150%（不强行把超小图拉得太大）
+    bestScale = Math.max(0.05, Math.min(1.5, bestScale));
+    zoom.value = bestScale;
+    
+    // 计算居中对齐时的平移位置（由于 .canvas-container 已被 left:0; top:0; 绝对定位化）
+    panX.value = (workspace.clientWidth - imgW * bestScale) / 2;
+    panY.value = (workspace.clientHeight - imgH * bestScale) / 2;
+  } else {
+    zoom.value = 1.0;
+    panX.value = 0;
+    panY.value = 0;
+  }
 };
+
+
 
 // 设置当前使用工具
 const setTool = (tool) => {
@@ -1186,12 +1226,17 @@ const handleSVGClick = (e) => {
     
     if (activePolygonPoints.value.length >= 3) {
       const first = activePolygonPoints.value[0];
-      const dist = Math.hypot(normX - first[0], normY - first[1]);
-      if (dist < 0.015) {
+      const firstX = first[0] * imgNaturalWidth.value;
+      const firstY = first[1] * imgNaturalHeight.value;
+      const distImg = Math.hypot(px - firstX, py - firstY);
+      
+      // 判定屏幕上的物理像素距离。当点击位置与第一个点的屏幕距离小于 8 像素时，判定为闭合
+      if (distImg * zoom.value < 8) {
         finishDrawing();
         return;
       }
     }
+
     
     activePolygonPoints.value.push([normX, normY]);
   }
@@ -1607,6 +1652,27 @@ watch(currentTab, (newTab) => {
   }
 });
 
+// 监听训练状态以启停定时器，确保没有训练时只在刷新页面时请求一次
+watch(isTraining, (newVal) => {
+  if (newVal) {
+    if (!statusInterval) {
+      statusInterval = setInterval(fetchTrainStatus, 1000);
+    }
+    if (!sysInfoInterval) {
+      sysInfoInterval = setInterval(fetchSysInfo, 3000);
+    }
+  } else {
+    if (statusInterval) {
+      clearInterval(statusInterval);
+      statusInterval = null;
+    }
+    if (sysInfoInterval) {
+      clearInterval(sysInfoInterval);
+      sysInfoInterval = null;
+    }
+  }
+}, { immediate: true });
+
 onMounted(() => {
   const savedTheme = localStorage.getItem('theme');
   if (savedTheme === 'light') {
@@ -1622,13 +1688,11 @@ onMounted(() => {
   fetchSysInfo();
   fetchTrainStatus();
   
-  statusInterval = setInterval(fetchTrainStatus, 1000);
-  sysInfoInterval = setInterval(fetchSysInfo, 3000);
-  
   if (currentTab.value === 'label') {
     fetchImageList();
     fetchModelsList();
     window.addEventListener('keydown', handleKeyDown);
+
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMoveGlobal);
   }
