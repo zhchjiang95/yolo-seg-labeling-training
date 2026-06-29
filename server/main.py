@@ -157,6 +157,9 @@ class SaveAnnotationRequest(BaseModel):
     name: str
     polygons: List[PolygonItem]
 
+class SaveNegativeRequest(BaseModel):
+    name: str
+
 class SAMPredictRequest(BaseModel):
     name: str
     points: List[List[float]] = Field(..., description="点击坐标 [[x1, y1], ...]")
@@ -260,20 +263,26 @@ def get_labeling_images():
             # 检查是否有对应 label 文件
             label_name = item.stem + ".txt"
             label_path = labels_dir / label_name
-            labeled = False
+            
+            status = "unlabeled"
             label_count = 0
-            if label_path.exists() and label_path.stat().st_size > 0:
-                try:
-                    with open(label_path, "r", encoding="utf-8") as f:
-                        lines = [line.strip() for line in f if line.strip()]
-                        label_count = len(lines)
-                        labeled = label_count > 0
-                except Exception as e:
-                    print(f"读取 label 文件行数出错 {label_path}: {e}")
+            if label_path.exists():
+                if label_path.stat().st_size > 0:
+                    try:
+                        with open(label_path, "r", encoding="utf-8", errors="ignore") as f:
+                            lines = [line.strip() for line in f if line.strip()]
+                            label_count = len(lines)
+                            status = "labeled" if label_count > 0 else "negative"
+                    except Exception as e:
+                        print(f"读取 label 文件行数出错 {label_path}: {e}")
+                        status = "unlabeled"
+                else:
+                    status = "negative"
             
             result.append({
                 "name": item.name,
-                "labeled": labeled,
+                "labeled": status == "labeled",
+                "status": status,
                 "label_count": label_count,
                 "size_kb": round(item.stat().st_size / 1024, 1),
                 "mtime": int(item.stat().st_mtime)
@@ -366,17 +375,101 @@ def save_labeling_labels(req: SaveAnnotationRequest):
     
     label_path = labels_dir / (Path(req.name).stem + ".txt")
     
+    valid_polygons = [poly for poly in req.polygons if len(poly.points) >= 3]
+    
+    if not valid_polygons:
+        # 如果 polygons 为空，删除可能存在的标签文件（使其变成“未标”状态），而不是留个空文件被误判为负样本
+        if label_path.exists():
+            try:
+                label_path.unlink()
+            except Exception as e:
+                print(f"删除旧标签文件失败 {label_path}: {e}")
+        return {"status": "success", "message": f"{req.name} 标注已清空"}
+    
     lines = []
-    for poly in req.polygons:
-        if len(poly.points) < 3:
-            continue
+    for poly in valid_polygons:
         coords_str = " ".join([f"{p[0]:.6f} {p[1]:.6f}" for p in poly.points])
         lines.append(f"{poly.class_id} {coords_str}\n")
         
-    with open(label_path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
+    try:
+        with open(label_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"写入标签文件失败: {str(e)}")
         
     return {"status": "success", "message": f"{req.name} 标注已保存"}
+
+# 5.1 保存为负样本并重命名
+@app.post("/api/labeling/save_negative")
+def save_labeling_negative(req: SaveNegativeRequest):
+    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / "images"
+    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / "labels"
+    
+    img_path = images_dir / req.name
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="图片不存在")
+        
+    suffix = img_path.suffix.lower()
+    
+    # 扫描所有图片文件，找出符合 负样本{number}{suffix} 的最大编号
+    import re
+    max_num = 0
+    pattern = re.compile(r"^负样本(\d+)$")
+    
+    for item in images_dir.iterdir():
+        if item.is_file() and item.suffix.lower() == suffix:
+            match = pattern.match(item.stem)
+            if match:
+                try:
+                    num = int(match.group(1))
+                    if num > max_num:
+                        max_num = num
+                except ValueError:
+                    pass
+                    
+    next_num = max_num + 1
+    # 确保不与已有的图片和标签文件重名冲突
+    while (images_dir / f"负样本{next_num}{suffix}").exists() or (labels_dir / f"负样本{next_num}.txt").exists():
+        next_num += 1
+        
+    new_stem = f"负样本{next_num}"
+    new_img_name = f"{new_stem}{suffix}"
+    new_img_path = images_dir / new_img_name
+    
+    # 如果存在旧的标签文件，物理删除它
+    old_label_path = labels_dir / (Path(req.name).stem + ".txt")
+    if old_label_path.exists():
+        try:
+            old_label_path.unlink()
+        except Exception as e:
+            print(f"删除旧标签文件失败 {old_label_path}: {e}")
+            
+    # 重命名图片文件
+    import shutil
+    try:
+        shutil.move(str(img_path), str(new_img_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"图片文件重命名失败: {str(e)}")
+        
+    # 创建新的空标签文件以代表负样本
+    new_label_path = labels_dir / f"{new_stem}.txt"
+    try:
+        with open(new_label_path, "w", encoding="utf-8") as f:
+            pass  # 创建空文件
+    except Exception as e:
+        # 回退图片重命名
+        if new_img_path.exists():
+            try:
+                shutil.move(str(new_img_path), str(img_path))
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"创建空标签文件失败: {str(e)}")
+        
+    return {
+        "status": "success",
+        "message": f"已成功保存为负样本并重命名为 {new_img_name}",
+        "new_name": new_img_name
+    }
 
 # 6. 获取和更新 Classes
 @app.post("/api/labeling/classes")

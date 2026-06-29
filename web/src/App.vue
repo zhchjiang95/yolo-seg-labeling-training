@@ -373,14 +373,14 @@
 
         <!-- 快速过滤 Tab 栏 -->
         <div class="filter-tab-bar">
-          <button class="filter-tab-btn" :class="{ active: filterStatus === 'all' }" @click="filterStatus = 'all'">
-            全部 ({{ imageList.length }})
-          </button>
           <button class="filter-tab-btn" :class="{ active: filterStatus === 'labeled' }" @click="filterStatus = 'labeled'">
-            已标 ({{ imageList.filter(img => img.labeled).length }})
+            已标 ({{ imageList.filter(img => img.status === 'labeled').length }})
           </button>
           <button class="filter-tab-btn" :class="{ active: filterStatus === 'unlabeled' }" @click="filterStatus = 'unlabeled'">
-            未标 ({{ imageList.filter(img => !img.labeled).length }})
+            未标 ({{ imageList.filter(img => img.status === 'unlabeled').length }})
+          </button>
+          <button class="filter-tab-btn" :class="{ active: filterStatus === 'negative' }" @click="filterStatus = 'negative'">
+            负样本 ({{ imageList.filter(img => img.status === 'negative').length }})
           </button>
         </div>
 
@@ -406,8 +406,8 @@
             </div>
             <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
               <!-- 显式区分文字 Badge -->
-              <span class="status-badge-inline" :class="img.labeled ? 'labeled' : 'unlabeled'">
-                {{ img.labeled ? '已标 ' + (img.label_count || 0) + ' 个' : '未标' }}
+              <span class="status-badge-inline" :class="img.status">
+                {{ img.status === 'labeled' ? '已标 ' + (img.label_count || 0) + ' 个' : (img.status === 'negative' ? '负样本' : '未标') }}
               </span>
               <button class="file-item-delete-btn" @click="deleteImage(img.name, $event)" title="删除图片">
                 <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -509,6 +509,9 @@
             </button>
             <button class="tool-btn active" @click="saveAnnotations" :disabled="!currentImage" style="background: var(--primary-gradient);">
               保存标注
+            </button>
+            <button class="tool-btn" @click="saveAsNegative" :disabled="!currentImage" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; border-color: transparent;" title="保存此图片为负样本，标注将清空且重命名图片">
+              保存为负样本
             </button>
           </div>
         </div>
@@ -894,6 +897,24 @@ const closeLogStream = () => {
 const handleStartTrain = async () => {
   try {
     clearLogs();
+    
+    // 统计未标注的图片并提示
+    try {
+      const imgRes = await fetch(`${API_BASE}/api/labeling/images`);
+      if (imgRes.ok) {
+        const list = await imgRes.json();
+        const unlabeledCount = list.filter(img => !img.labeled).length;
+        if (unlabeledCount > 0) {
+          if (!confirm(`尚有 ${unlabeledCount} 张图片未标注，未标注的图片将作为背景训练。是否继续？`)) {
+            logs.value.push('[SYSTEM] 训练启动已被取消。');
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('获取待标图片列表失败:', err);
+    }
+
     showToast('正在向后端请求启动 YOLO 训练...', 'info');
     logs.value.push('[SYSTEM] 正在向后端请求启动 YOLO26s-seg 实例分割训练...');
     const res = await fetch(`${API_BASE}/api/start`, {
@@ -970,7 +991,7 @@ const updateThemeClass = () => {
 
 const imageList = ref([]);
 const searchQuery = ref('');
-const filterStatus = ref('all'); // all | labeled | unlabeled
+const filterStatus = ref('unlabeled'); // labeled | unlabeled | negative
 const currentImage = ref(null);
 const activeTool = ref('edit'); // edit | draw | sam | pan
 
@@ -1021,9 +1042,11 @@ const currentImageSrc = computed(() => {
 const filteredImageList = computed(() => {
   let list = imageList.value;
   if (filterStatus.value === 'labeled') {
-    list = list.filter(img => img.labeled);
+    list = list.filter(img => img.status === 'labeled');
   } else if (filterStatus.value === 'unlabeled') {
-    list = list.filter(img => !img.labeled);
+    list = list.filter(img => img.status === 'unlabeled');
+  } else if (filterStatus.value === 'negative') {
+    list = list.filter(img => img.status === 'negative');
   }
   if (!searchQuery.value) return list;
   const q = searchQuery.value.toLowerCase();
@@ -1593,6 +1616,51 @@ const saveAnnotations = async () => {
     }
   } catch (err) {
     console.error('保存标注出错:', err);
+    showToast('保存异常，无法连接服务', 'error');
+  }
+};
+
+const saveAsNegative = async () => {
+  if (!currentImage.value) return;
+  if (polygons.value.length > 0) {
+    if (!confirm('警告：此操作将清空当前图片的所有标注多边形。确认继续吗？')) {
+      return;
+    }
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/save_negative`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: currentImage.value.name
+      })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      showToast('已成功保存为负样本！', 'success');
+      
+      const newName = data.new_name;
+      
+      // 重新拉取图片列表
+      await fetchImageList();
+      await fetchSysInfo();
+      
+      // 自动查找并选中重命名后的图片
+      const newImg = imageList.value.find(img => img.name === newName);
+      if (newImg) {
+        await selectImage(newImg);
+      } else {
+        currentImage.value = null;
+        polygons.value = [];
+        activePolyIndex.value = null;
+      }
+    } else {
+      const err = await res.json();
+      showToast('保存负样本失败: ' + (err.detail || '接口错误'), 'error');
+    }
+  } catch (err) {
+    console.error('保存负样本出错:', err);
     showToast('保存异常，无法连接服务', 'error');
   }
 };
