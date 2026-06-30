@@ -1589,8 +1589,24 @@ const addClass = async () => {
   }
 };
 
+const getNextImage = () => {
+  if (!currentImage.value || filteredImageList.value.length <= 1) return null;
+  const idx = filteredImageList.value.findIndex(img => img.name === currentImage.value.name);
+  if (idx === -1) return null;
+  // 优先选择后面一张，如果没有后面一张，则选择前面一张
+  if (idx < filteredImageList.value.length - 1) {
+    return filteredImageList.value[idx + 1];
+  } else {
+    return filteredImageList.value[idx - 1];
+  }
+};
+
 const saveAnnotations = async () => {
   if (!currentImage.value) return;
+  
+  // 提前计算好下一张图片
+  const nextImg = getNextImage();
+  
   try {
     const res = await fetch(`${API_BASE}/api/labeling/save`, {
       method: 'POST',
@@ -1609,8 +1625,18 @@ const saveAnnotations = async () => {
       if (found) {
         found.labeled = polygons.value.length > 0;
         found.label_count = polygons.value.length;
+        found.status = polygons.value.length > 0 ? 'labeled' : 'unlabeled';
       }
       showToast('标注数据已保存成功！', 'success');
+      
+      // 自动跳转到下一张
+      if (nextImg) {
+        await selectImage(nextImg);
+      } else {
+        currentImage.value = null;
+        polygons.value = [];
+        activePolyIndex.value = null;
+      }
     } else {
       showToast('保存标注失败', 'error');
     }
@@ -1620,6 +1646,7 @@ const saveAnnotations = async () => {
   }
 };
 
+
 const saveAsNegative = async () => {
   if (!currentImage.value) return;
   if (polygons.value.length > 0) {
@@ -1627,6 +1654,10 @@ const saveAsNegative = async () => {
       return;
     }
   }
+  
+  // 提前计算好下一张图片
+  const nextImg = getNextImage();
+  
   try {
     const res = await fetch(`${API_BASE}/api/labeling/save_negative`, {
       method: 'POST',
@@ -1640,16 +1671,20 @@ const saveAsNegative = async () => {
       const data = await res.json();
       showToast('已成功保存为负样本！', 'success');
       
-      const newName = data.new_name;
-      
       // 重新拉取图片列表
       await fetchImageList();
       await fetchSysInfo();
       
-      // 自动查找并选中重命名后的图片
-      const newImg = imageList.value.find(img => img.name === newName);
-      if (newImg) {
-        await selectImage(newImg);
+      // 自动跳转到下一张
+      if (nextImg) {
+        const foundNext = imageList.value.find(img => img.name === nextImg.name);
+        if (foundNext) {
+          await selectImage(foundNext);
+        } else {
+          currentImage.value = null;
+          polygons.value = [];
+          activePolyIndex.value = null;
+        }
       } else {
         currentImage.value = null;
         polygons.value = [];
