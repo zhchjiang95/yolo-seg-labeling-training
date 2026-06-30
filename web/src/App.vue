@@ -387,7 +387,7 @@
       <!-- 1. 左栏：图片管理 -->
       <div class="glass-card file-list-card">
         <div class="section-title" style="margin-bottom: 12px; font-size: 16px;">
-          待标图集列表 ({{ imageList.filter(img => img.labeled).length }}/{{ imageList.length }})
+          图集列表 (共 {{ imageList.length }} 张)
         </div>
         
         <!-- 搜索 -->
@@ -1168,16 +1168,25 @@ const removeClass = async (idx) => {
   }
 };
 
+const fetchClasses = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/classes?dataset=${currentDataset.value}`);
+    if (res.ok) {
+      const data = await res.json();
+      classes.value = data.classes || ['pig'];
+    }
+  } catch (err) {
+    console.error('获取类别列表失败:', err);
+  }
+};
+
 // 监听当前数据集变化，并重载相关列表
 watch(currentDataset, async () => {
   await fetchImageList();
-  if (imageList.value.length > 0) {
-    await selectImage(imageList.value[0]);
-  } else {
-    currentImage.value = null;
-    polygons.value = [];
-    activePolyIndex.value = null;
-  }
+  await fetchClasses();
+  currentImage.value = null;
+  polygons.value = [];
+  activePolyIndex.value = null;
   await fetchSysInfo();
 });
 
@@ -1892,6 +1901,7 @@ const handleMouseMoveGlobal = (e) => {
 watch(currentTab, (newTab) => {
   if (newTab === 'label') {
     fetchImageList();
+    fetchClasses();
     fetchModelsList();
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
@@ -1938,6 +1948,7 @@ onMounted(async () => {
   updateThemeClass();
 
   await fetchDatasets();
+  await fetchClasses();
 
   fetchSysInfo();
   fetchTrainStatus();

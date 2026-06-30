@@ -583,6 +583,21 @@ def save_labeling_negative(req: SaveNegativeRequest, dataset: str = "default"):
     }
 
 # 6. 获取和更新 Classes，并提供级联标签删除清洗
+@app.get("/api/labeling/classes")
+def get_labeling_classes(dataset: str = "default"):
+    dataset_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset
+    classes_file = dataset_dir / "classes.txt"
+    
+    if not classes_file.exists():
+        classes_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(classes_file, "w", encoding="utf-8") as f:
+            f.write("pig\n")
+            
+    classes = ["pig"]
+    with open(classes_file, "r", encoding="utf-8", errors="ignore") as f:
+        classes = [line.strip() for line in f if line.strip()]
+    return {"classes": classes}
+
 @app.post("/api/labeling/classes")
 def update_labeling_classes(req: ClassesUpdateRequest, dataset: str = "default"):
     dataset_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset
