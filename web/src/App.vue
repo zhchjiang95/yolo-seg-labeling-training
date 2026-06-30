@@ -271,6 +271,9 @@
               </svg>
               强行终止训练任务
             </button>
+            <div v-if="!isTraining" class="form-desc" style="text-align: center; margin-top: 8px; color: var(--text-muted); font-size: 11px;">
+              提示：训练开始将清除上一次训练的结果
+            </div>
           </div>
         </form>
 
@@ -314,20 +317,43 @@
       <div class="monitor-area">
         <!-- 进度条面板 -->
         <div class="glass-card progress-panel">
-          <div class="progress-header">
+          <!-- 1. 正在训练时的头部 -->
+          <div v-if="isTraining" class="progress-header">
             <span style="font-weight: 600; font-size: 16px;">训练进度概览</span>
             <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; color: var(--primary);">
               Epoch: {{ trainStatus.progress.epoch }} / {{ trainStatus.progress.total_epochs }} ({{ trainStatus.progress.percent }}%)
             </span>
           </div>
+          <!-- 2. 没在训练，且有最近训练历史时的头部 -->
+          <div v-else-if="trainStatus.last_run && trainStatus.last_run.has_data" class="progress-header history">
+            <span style="font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+              <svg style="width: 18px; height: 18px; color: var(--success);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              最近一次训练结果概览
+            </span>
+            <span class="history-badge">
+              数据集: {{ trainStatus.last_run.dataset }}
+            </span>
+          </div>
+          <!-- 3. 没在训练，且无训练历史时的头部 -->
+          <div v-else class="progress-header">
+            <span style="font-weight: 600; font-size: 16px;">训练进度概览</span>
+            <span style="font-size: 13px; color: var(--text-muted);">暂无训练结果，请启动训练</span>
+          </div>
 
           <!-- 进度条 -->
-          <div class="progress-bar-track">
+          <div v-if="isTraining" class="progress-bar-track">
             <div class="progress-bar-fill" :style="{ width: trainStatus.progress.percent + '%' }"></div>
+          </div>
+          <div v-else-if="trainStatus.last_run && trainStatus.last_run.has_data" class="progress-bar-track history">
+            <div class="progress-bar-fill completed" :style="{ width: '100%' }"></div>
           </div>
 
           <!-- 指标卡网格 -->
-          <div class="progress-stats-grid">
+          <!-- 训练时的指标卡 -->
+          <div v-if="isTraining" class="progress-stats-grid">
             <div class="stat-item">
               <span class="stat-label">预计剩余时间 (ETA)</span>
               <span class="stat-value" style="color: var(--warning);">{{ trainStatus.progress.eta }}</span>
@@ -351,6 +377,69 @@
             <div class="stat-item">
               <span class="stat-label">mAP50-95</span>
               <span class="stat-value" style="color: var(--success);">{{ trainStatus.progress.map50_95.toFixed(4) }}</span>
+            </div>
+          </div>
+          
+          <!-- 没在训练，且有最近训练历史时的指标卡 -->
+          <div v-else-if="trainStatus.last_run && trainStatus.last_run.has_data" class="progress-stats-grid history">
+            <div class="stat-item">
+              <span class="stat-label">完成轮次 (Epochs)</span>
+              <span class="stat-value" style="color: var(--primary);">
+                {{ trainStatus.last_run.metrics.epoch }} / {{ trainStatus.last_run.meta.epochs || 300 }}
+              </span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Box Loss</span>
+              <span class="stat-value">{{ trainStatus.last_run.metrics.box_loss.toFixed(4) }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Segmentation Loss</span>
+              <span class="stat-value">{{ trainStatus.last_run.metrics.seg_loss.toFixed(4) }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Class Loss</span>
+              <span class="stat-value">{{ trainStatus.last_run.metrics.cls_loss.toFixed(4) }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">mAP50 (分割)</span>
+              <span class="stat-value" style="color: var(--success);">{{ trainStatus.last_run.metrics.map50.toFixed(4) }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">mAP50-95</span>
+              <span class="stat-value" style="color: var(--success);">{{ trainStatus.last_run.metrics.map50_95.toFixed(4) }}</span>
+            </div>
+          </div>
+
+          <!-- 没在训练且无历史记录 -->
+          <div v-else class="progress-stats-grid empty" style="display: block;">
+            <div style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 13px;">
+              等待启动训练。启动后将在此处实时显示训练各项指标与进度。
+            </div>
+          </div>
+
+          <!-- 历史训练时的附加操作区：下载权重与效果图 -->
+          <div v-if="!isTraining && trainStatus.last_run && trainStatus.last_run.has_data" class="history-actions-area">
+            <div class="action-buttons" style="display: flex; gap: 12px; width: 100%;">
+              <button 
+                type="button"
+                class="btn btn-success" 
+                :disabled="!trainStatus.last_run.has_best_weight"
+                @click="downloadBestWeight"
+                style="display: flex; align-items: center; justify-content: center; gap: 8px; flex: 1; padding: 10px; font-weight: 600;"
+              >
+                <svg style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                </svg>
+                下载最佳权重模型 (best.pt)
+              </button>
+            </div>
+
+            <!-- 展示训练曲线 results.png -->
+            <div v-if="trainStatus.last_run.results_png" class="results-chart-container">
+              <div class="chart-title">训练评估曲线 (results.png)</div>
+              <div class="chart-wrapper">
+                <img :src="getResultsPngUrl(trainStatus.last_run.results_png)" alt="Training Results Chart" class="results-chart-img" />
+              </div>
             </div>
           </div>
         </div>
@@ -856,6 +945,21 @@ const trainStatus = reactive({
     mr: 0.0,
     map50: 0.0,
     map50_95: 0.0
+  },
+  last_run: {
+    has_data: false,
+    dataset: '',
+    has_best_weight: false,
+    metrics: {
+      epoch: 0,
+      box_loss: 0.0,
+      seg_loss: 0.0,
+      cls_loss: 0.0,
+      map50: 0.0,
+      map50_95: 0.0
+    },
+    meta: {},
+    results_png: ''
   }
 });
 
@@ -898,6 +1002,15 @@ const fetchTrainStatus = async () => {
   } catch (err) {
     console.error('获取训练状态失败:', err);
   }
+};
+
+const downloadBestWeight = () => {
+  window.open(`${API_BASE}/api/download_best`, '_blank');
+};
+
+const getResultsPngUrl = (path) => {
+  if (!path) return '';
+  return `${API_BASE}${path}?t=${new Date().getTime()}`;
 };
 
 const startLogStream = () => {

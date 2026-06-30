@@ -1535,4 +1535,75 @@ select:focus {
   }
 }
 
+/* 历史训练结果样式 */
+.progress-header.history {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+}
+
+.history-badge {
+  font-size: 12px;
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.progress-bar-fill.completed {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+}
+
+.progress-bar-track.history {
+  height: 6px;
+  opacity: 0.8;
+}
+
+.history-actions-area {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 16px;
+}
+
+.results-chart-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.chart-wrapper {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.results-chart-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  transition: transform 0.3s ease;
+}
+
+.results-chart-img:hover {
+  transform: scale(1.02);
+  cursor: zoom-in;
+}
+
+
 
