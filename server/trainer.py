@@ -164,6 +164,31 @@ class YOLOTrainer:
             data_yaml_path = split_res["data_yaml"]
             self._write_log(f"[SYSTEM] 数据集自动准备完成！已写入 data.yaml: {data_yaml_path}\n")
 
+            # 提前创建训练结果目录并保存训练元数据（如所用数据集），方便后续空闲时查询
+            save_dir = self.workspace_dir / "runs" / "segment" / "yolo26s_train"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                train_meta = {
+                    "dataset": config.get("dataset", "default"),
+                    "epochs": config.get("epochs", 300),
+                    "batch": config.get("batch", 4),
+                    "lr0": config.get("lr0", 0.001),
+                    "patience": config.get("patience", 50),
+                    "imgsz": config.get("imgsz", 960),
+                    "device": config.get("device", "0"),
+                    "split_ratio": config.get("split_ratio", "8:1:1"),
+                    "mosaic": config.get("mosaic", 0.5),
+                    "mixup": config.get("mixup", 0.0),
+                    "copy_paste": config.get("copy_paste", 0.3),
+                    "fliplr": config.get("fliplr", 0.5),
+                    "flipud": config.get("flipud", 0.5),
+                    "degrees": config.get("degrees", 180.0)
+                }
+                with open(save_dir / "train_meta.json", "w", encoding="utf-8") as f:
+                    json.dump(train_meta, f, ensure_ascii=False, indent=4)
+            except Exception as e:
+                self._write_log(f"[SYSTEM] 写入 train_meta.json 失败: {str(e)}\n")
+
             # 2. 动态生成临时 YOLO 训练运行 Python 脚本
             # 这样做可以避免多平台 CLI 参数传参乱码，且能独立设置 stdout 编码
             model_path = self.workspace_dir / "models" / "yolo26s-seg.pt"
@@ -366,3 +391,151 @@ if __name__ == '__main__':
             except Exception:
                 pass
             return
+
+    def get_last_run_info(self) -> Dict[str, Any]:
+        """
+        获取最近一次训练的结果信息（指标、数据集名称、模型状态等）
+        """
+        run_dirs = [
+            self.workspace_dir / "runs" / "segment" / "yolo26s_train",
+            self.workspace_dir / "runs" / "yolo26s_train"
+        ]
+        
+        target_dir = None
+        for d in run_dirs:
+            if d.exists() and d.is_dir():
+                target_dir = d
+                break
+                
+        if not target_dir:
+            return {"has_data": False}
+            
+        results_csv = target_dir / "results.csv"
+        weights_dir = target_dir / "weights"
+        best_pt = weights_dir / "best.pt" if weights_dir.exists() else None
+        
+        has_best_weight = best_pt.exists() if best_pt else False
+        
+        # 1. 读取 train_meta.json 获取数据集名称及元配置
+        dataset_name = "未知数据集"
+        meta_info = {}
+        meta_file = target_dir / "train_meta.json"
+        if meta_file.exists():
+            try:
+                with open(meta_file, "r", encoding="utf-8") as f:
+                    meta_info = json.load(f)
+                    dataset_name = meta_info.get("dataset", "default")
+            except Exception:
+                pass
+        else:
+            # 兼容：如果不存在 train_meta.json 则尝试解析 args.yaml 获取配置
+            args_file = target_dir / "args.yaml"
+            if args_file.exists():
+                try:
+                    import yaml
+                    with open(args_file, "r", encoding="utf-8") as f:
+                        args_data = yaml.safe_load(f)
+                        if args_data:
+                            meta_info["epochs"] = args_data.get("epochs", 300)
+                            meta_info["batch"] = args_data.get("batch", 4)
+                            meta_info["imgsz"] = args_data.get("imgsz", 960)
+                            data_path = args_data.get("data")
+                            if data_path:
+                                dataset_name = "已完成训练的数据集"
+                except Exception:
+                    pass
+
+        # 2. 读取 results.csv 解析最终指标
+        metrics = {
+            "epoch": 0,
+            "box_loss": 0.0,
+            "seg_loss": 0.0,
+            "cls_loss": 0.0,
+            "map50": 0.0,
+            "map50_95": 0.0
+        }
+        
+        if results_csv.exists():
+            try:
+                with open(results_csv, "r", encoding="utf-8") as f:
+                    lines = [line.strip() for line in f.readlines() if line.strip()]
+                    if len(lines) > 1:
+                        # 解析表头
+                        headers = [h.strip() for h in lines[0].split(",")]
+                        # 解析最后一行
+                        last_line_data = [d.strip() for d in lines[-1].split(",")]
+                        
+                        row = {}
+                        for h, val in zip(headers, last_line_data):
+                            try:
+                                row[h] = float(val)
+                            except ValueError:
+                                row[h] = val
+                                
+                        # 寻找已训练的实际 epoch
+                        for h in headers:
+                            if "epoch" in h.lower():
+                                metrics["epoch"] = int(row[h])
+                                break
+                                
+                        # 兼容并选取最佳 Loss (若有验证集则优先用 val，否则用 train)
+                        loss_keys = {
+                            "box_loss": ["val/box_loss", "train/box_loss", "box_loss"],
+                            "seg_loss": ["val/seg_loss", "train/seg_loss", "seg_loss"],
+                            "cls_loss": ["val/cls_loss", "train/cls_loss", "cls_loss"]
+                        }
+                        
+                        for metric_name, possible_headers in loss_keys.items():
+                            for p_h in possible_headers:
+                                if p_h in row:
+                                    metrics[metric_name] = row[p_h]
+                                    break
+                                    
+                        # 选取分割 mAP (优先选择 metrics/mAP50(M) 掩码指标)
+                        map50_keys = ["metrics/mAP50(M)", "metrics/mAP50(B)", "val/mAP50", "mAP50"]
+                        for k in map50_keys:
+                            if k in row:
+                                metrics["map50"] = row[k]
+                                break
+                            found = False
+                            for h in headers:
+                                if "map50" in h.lower() and "(m)" in h.lower():
+                                    metrics["map50"] = row[h]
+                                    found = True
+                                    break
+                            if found:
+                                break
+                                
+                        map50_95_keys = ["metrics/mAP50-95(M)", "metrics/mAP50-95(B)", "val/mAP50-95", "mAP50-95"]
+                        for k in map50_95_keys:
+                            if k in row:
+                                metrics["map50_95"] = row[k]
+                                break
+                            found = False
+                            for h in headers:
+                                if "map50-95" in h.lower() and "(m)" in h.lower():
+                                    metrics["map50_95"] = row[h]
+                                    found = True
+                                    break
+                            if found:
+                                break
+            except Exception as e:
+                print(f"解析 results.csv 失败: {e}")
+                
+        # 检查 results.png 是否存在并提供静态可访问相对 URL
+        results_png = target_dir / "results.png"
+        has_results_png = results_png.exists()
+        try:
+            rel_results_png = f"/runs/{results_png.relative_to(self.workspace_dir / 'runs').as_posix()}"
+        except Exception:
+            rel_results_png = ""
+
+        return {
+            "has_data": True,
+            "dataset": dataset_name,
+            "has_best_weight": has_best_weight,
+            "metrics": metrics,
+            "meta": meta_info,
+            "results_png": rel_results_png if has_results_png else ""
+        }
+

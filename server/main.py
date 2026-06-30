@@ -138,7 +138,35 @@ def stop_train():
 @app.get("/api/status")
 def get_status():
     """获取训练状态和进度数据"""
-    return trainer.get_status()
+    status = trainer.get_status()
+    # 如果没在训练，则获取最近一次训练的历史结果指标
+    if status["state"] not in ["preparing", "training"]:
+        status["last_run"] = trainer.get_last_run_info()
+    return status
+
+@app.get("/api/download_best")
+def download_best_weight():
+    """下载最近一次训练生成的最佳权重文件 best.pt"""
+    run_dirs = [
+        WORKSPACE_DIR / "runs" / "segment" / "yolo26s_train",
+        WORKSPACE_DIR / "runs" / "yolo26s_train"
+    ]
+    
+    best_pt = None
+    for d in run_dirs:
+        p = d / "weights" / "best.pt"
+        if p.exists():
+            best_pt = p
+            break
+            
+    if not best_pt:
+        raise HTTPException(status_code=404, detail="最佳权重文件 best.pt 不存在")
+        
+    return FileResponse(
+        path=str(best_pt),
+        filename="best.pt",
+        media_type="application/octet-stream"
+    )
 
 # ==========================================
 # 数据集管理接口
@@ -832,6 +860,11 @@ async def get_logs_stream(request: Request):
             "Connection": "keep-alive",
         }
     )
+
+# 挂载训练结果 runs 目录为静态资源，便于前端加载 results.png 等评估图表
+runs_dir = WORKSPACE_DIR / "runs"
+runs_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/runs", StaticFiles(directory=str(runs_dir)), name="runs")
 
 # 静态资源挂载（当 web/dist 目录存在时生效，方便生产环境单端口部署）
 web_dist_path = WORKSPACE_DIR / "web" / "dist"
