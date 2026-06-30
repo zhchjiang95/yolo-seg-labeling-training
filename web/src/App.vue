@@ -71,19 +71,43 @@
       </div>
     </header>
 
-    <!-- TAB 导航栏 -->
-    <div class="nav-tabs">
-      <div class="tab-item" :class="{ active: currentTab === 'train' }" @click="currentTab = 'train'">
-        <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-        </svg>
-        模型训练
+    <!-- TAB 导航与数据集选择栏 -->
+    <div class="tabs-container">
+      <div class="nav-tabs">
+        <div class="tab-item" :class="{ active: currentTab === 'train' }" @click="currentTab = 'train'">
+          <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+          </svg>
+          模型训练
+        </div>
+        <div class="tab-item" :class="{ active: currentTab === 'label' }" @click="currentTab = 'label'">
+          <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+          数据标注
+        </div>
       </div>
-      <div class="tab-item" :class="{ active: currentTab === 'label' }" @click="currentTab = 'label'">
-        <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-        </svg>
-        数据标注
+
+      <!-- 右侧数据集选择 -->
+      <div class="dataset-select-bar">
+        <label style="margin-bottom: 0; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;">
+          <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          数据集：
+        </label>
+        <select v-model="currentDataset" class="dataset-select">
+          <option v-for="ds in datasets" :key="ds" :value="ds">{{ ds }}</option>
+        </select>
+
+        <!-- 创建按钮 (仅在数据标注页签显示) -->
+        <button v-if="currentTab === 'label'" class="create-ds-btn" @click="handleCreateDataset" title="创建新数据集">
+          <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          新建数据集
+        </button>
       </div>
     </div>
 
@@ -662,9 +686,18 @@
               class="class-badge"
               :class="{ active: activeClassIndex === idx }"
               @click="activeClassIndex = idx"
+              style="position: relative; display: flex; align-items: center; padding-right: 24px;"
             >
               <span :style="{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: getPolyColor(idx), marginRight: '6px' }"></span>
               {{ clsName }}
+              <span 
+                v-if="classes.length > 1"
+                class="class-delete-icon" 
+                @click.stop="removeClass(idx)"
+                title="删除此类别"
+              >
+                ×
+              </span>
             </div>
           </div>
         </div>
@@ -838,7 +871,7 @@ const isTraining = computed(() => {
 
 const fetchSysInfo = async () => {
   try {
-    const res = await fetch(`${API_BASE}/api/sysinfo`);
+    const res = await fetch(`${API_BASE}/api/sysinfo?dataset=${currentDataset.value}`);
     if (res.ok) {
       const data = await res.json();
       Object.assign(sysInfo, data);
@@ -900,7 +933,7 @@ const handleStartTrain = async () => {
     
     // 统计未标注的图片并提示
     try {
-      const imgRes = await fetch(`${API_BASE}/api/labeling/images`);
+      const imgRes = await fetch(`${API_BASE}/api/labeling/images?dataset=${currentDataset.value}`);
       if (imgRes.ok) {
         const list = await imgRes.json();
         const unlabeledCount = list.filter(img => !img.labeled).length;
@@ -920,7 +953,7 @@ const handleStartTrain = async () => {
     const res = await fetch(`${API_BASE}/api/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form)
+      body: JSON.stringify({ ...form, dataset: currentDataset.value })
     });
     if (res.ok) {
       const data = await res.json();
@@ -1032,10 +1065,126 @@ const getPolyColor = (classId) => {
   return colors[classId % colors.length];
 };
 
+// 数据集管理状态
+const datasets = ref([]);
+const currentDataset = ref('default');
+
+const fetchDatasets = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/datasets`);
+    if (res.ok) {
+      const data = await res.json();
+      datasets.value = data.datasets || [];
+      if (datasets.value.length > 0 && !datasets.value.includes(currentDataset.value)) {
+        currentDataset.value = datasets.value[0];
+      }
+    }
+  } catch (err) {
+    console.error('获取数据集列表失败:', err);
+  }
+};
+
+const handleCreateDataset = async () => {
+  const name = prompt('请输入新数据集的名称（仅限中文、字母、数字、下划线和连字符）：');
+  if (name && name.trim()) {
+    const trimmed = name.trim();
+    if (!/^[a-zA-Z0-9_\-\u4e00-\u9fa5]+$/.test(trimmed)) {
+      showToast('数据集名称格式不正确，只能包含中文、字母、数字、下划线和连字符', 'error');
+      return;
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE}/api/labeling/datasets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed })
+      });
+      
+      if (res.ok) {
+        showToast(`数据集 [${trimmed}] 创建成功！`, 'success');
+        await fetchDatasets();
+        currentDataset.value = trimmed;
+      } else {
+        const err = await res.json();
+        showToast('创建数据集失败: ' + (err.detail || '接口错误'), 'error');
+      }
+    } catch (err) {
+      console.error('创建数据集出错:', err);
+      showToast('连接服务器失败', 'error');
+    }
+  }
+};
+
+// 类别级联删除方法
+const removeClass = async (idx) => {
+  const clsName = classes.value[idx];
+  if (classes.value.length <= 1) {
+    showToast('必须保留至少一个分类标签', 'warning');
+    return;
+  }
+  
+  if (!confirm(`确定要删除类别标签 [${clsName}] 吗？\n\n警告：删除后该数据集下所有图片的此类别标注将被自动清除，其他类别索引会自动前移。此操作不可逆！`)) {
+    return;
+  }
+  
+  // 1. 本地调整
+  classes.value.splice(idx, 1);
+  polygons.value = polygons.value
+    .filter(p => p.class_id !== idx)
+    .map(p => {
+      if (p.class_id > idx) {
+        return { ...p, class_id: p.class_id - 1 };
+      }
+      return p;
+    });
+    
+  if (activeClassIndex.value >= classes.value.length) {
+    activeClassIndex.value = classes.value.length - 1;
+  } else if (activeClassIndex.value === idx) {
+    activeClassIndex.value = 0;
+  } else if (activeClassIndex.value > idx) {
+    activeClassIndex.value -= 1;
+  }
+  
+  // 2. 发送后端
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/classes?dataset=${currentDataset.value}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ classes: classes.value })
+    });
+    
+    if (res.ok) {
+      showToast(`已成功删除类别标签: ${clsName}，后端已完成级联标注清理。`, 'success');
+      if (currentImage.value) {
+        await selectImage(currentImage.value);
+      }
+    } else {
+      showToast('删除类别失败', 'error');
+    }
+  } catch (err) {
+    console.error('删除类别出错:', err);
+    showToast('无法连接服务器', 'error');
+  }
+};
+
+// 监听当前数据集变化，并重载相关列表
+watch(currentDataset, async () => {
+  await fetchImageList();
+  if (imageList.value.length > 0) {
+    await selectImage(imageList.value[0]);
+  } else {
+    currentImage.value = null;
+    polygons.value = [];
+    activePolyIndex.value = null;
+  }
+  await fetchSysInfo();
+});
+
 // 图片源 URL
 const currentImageSrc = computed(() => {
   if (!currentImage.value) return '';
-  return `${API_BASE}/labeling_images/${currentImage.value.name}?t=${currentImage.value.mtime}`;
+  return `${API_BASE}/labeling_images/${currentDataset.value}/images/${currentImage.value.name}?t=${currentImage.value.mtime}`;
 });
 
 // 筛选后的图片列表
@@ -1056,7 +1205,7 @@ const filteredImageList = computed(() => {
 // 获取待标图片列表
 const fetchImageList = async () => {
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/images`);
+    const res = await fetch(`${API_BASE}/api/labeling/images?dataset=${currentDataset.value}`);
     if (res.ok) {
       imageList.value = await res.json();
     }
@@ -1087,7 +1236,7 @@ const selectImage = async (img) => {
   samPreviewPolygon.value = null;
   
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/labels/${img.name}`);
+    const res = await fetch(`${API_BASE}/api/labeling/labels/${img.name}?dataset=${currentDataset.value}`);
     if (res.ok) {
       const data = await res.json();
       classes.value = data.classes || ['pig'];
@@ -1406,7 +1555,7 @@ const autoDetect = async (modelPath = null) => {
   isAutoDetecting.value = true;
   showToast(modelPath ? '正在加载自定义模型识别中...' : '正在加载默认模型识别中...', 'info');
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/auto_detect`, {
+    const res = await fetch(`${API_BASE}/api/labeling/auto_detect?dataset=${currentDataset.value}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
@@ -1438,7 +1587,7 @@ const triggerSAMPredict = async () => {
   if (samPrompts.value.length === 0 || !currentImage.value) return;
   isSamPredicting.value = true;
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/sam_predict`, {
+    const res = await fetch(`${API_BASE}/api/labeling/sam_predict?dataset=${currentDataset.value}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1511,7 +1660,7 @@ const uploadFiles = async (files) => {
   if (imgCount === 0) return;
   showToast('开始上传图片...', 'info');
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/upload`, {
+    const res = await fetch(`${API_BASE}/api/labeling/upload?dataset=${currentDataset.value}`, {
       method: 'POST',
       body: formData
     });
@@ -1536,7 +1685,7 @@ const deleteImage = async (imgName, e) => {
   if (!confirm(`确认删除图片 ${imgName} 吗？\n警告：对应的标签文件也会随之物理删除，不可还原！`)) return;
   
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/image/${imgName}`, {
+    const res = await fetch(`${API_BASE}/api/labeling/image/${imgName}?dataset=${currentDataset.value}`, {
       method: 'DELETE'
     });
     
@@ -1571,7 +1720,7 @@ const addClass = async () => {
       activeClassIndex.value = classes.value.length - 1;
       
       try {
-        const res = await fetch(`${API_BASE}/api/labeling/classes`, {
+        const res = await fetch(`${API_BASE}/api/labeling/classes?dataset=${currentDataset.value}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ classes: classes.value })
@@ -1608,7 +1757,7 @@ const saveAnnotations = async () => {
   const nextImg = getNextImage();
   
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/save`, {
+    const res = await fetch(`${API_BASE}/api/labeling/save?dataset=${currentDataset.value}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1659,7 +1808,7 @@ const saveAsNegative = async () => {
   const nextImg = getNextImage();
   
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/save_negative`, {
+    const res = await fetch(`${API_BASE}/api/labeling/save_negative?dataset=${currentDataset.value}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1776,7 +1925,7 @@ watch(isTraining, (newVal) => {
   }
 }, { immediate: true });
 
-onMounted(() => {
+onMounted(async () => {
   const savedTheme = localStorage.getItem('theme');
   if (savedTheme === 'light') {
     isDark.value = false;
@@ -1787,6 +1936,8 @@ onMounted(() => {
     }
   }
   updateThemeClass();
+
+  await fetchDatasets();
 
   fetchSysInfo();
   fetchTrainStatus();

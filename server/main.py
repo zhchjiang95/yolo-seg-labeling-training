@@ -32,21 +32,70 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 确保 labeling 目录结构存在
-labeling_dir = WORKSPACE_DIR / "datasets" / "labeling"
-labeling_images_dir = labeling_dir / "images"
-labeling_labels_dir = labeling_dir / "labels"
-labeling_images_dir.mkdir(parents=True, exist_ok=True)
-labeling_labels_dir.mkdir(parents=True, exist_ok=True)
+# 自动迁移旧的数据集结构到子目录 default/ 下
+def migrate_legacy_dataset():
+    legacy_labeling_dir = WORKSPACE_DIR / "datasets" / "labeling"
+    legacy_images_dir = legacy_labeling_dir / "images"
+    legacy_labels_dir = legacy_labeling_dir / "labels"
+    legacy_classes_file = legacy_labeling_dir / "classes.txt"
 
-# 创建默认的 classes.txt
-classes_file = labeling_dir / "classes.txt"
-if not classes_file.exists():
-    with open(classes_file, "w", encoding="utf-8") as f:
+    # 如果存在旧的 images 目录，并且它是一个文件夹（不是子数据集的 default）
+    if legacy_images_dir.exists() and legacy_images_dir.is_dir():
+        import shutil
+        default_dataset_dir = legacy_labeling_dir / "default"
+        default_images_dir = default_dataset_dir / "images"
+        default_labels_dir = default_dataset_dir / "labels"
+        default_classes_file = default_dataset_dir / "classes.txt"
+
+        print(f"检测到旧版标注数据集，正在执行迁移到 default 数据集目录...")
+        default_dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # 移动 images 目录
+            if not default_images_dir.exists():
+                shutil.move(str(legacy_images_dir), str(default_images_dir))
+            else:
+                for item in legacy_images_dir.iterdir():
+                    shutil.move(str(item), str(default_images_dir / item.name))
+                shutil.rmtree(legacy_images_dir)
+
+            # 移动 labels 目录
+            if legacy_labels_dir.exists():
+                if not default_labels_dir.exists():
+                    shutil.move(str(legacy_labels_dir), str(default_labels_dir))
+                else:
+                    for item in legacy_labels_dir.iterdir():
+                        shutil.move(str(item), str(default_labels_dir / item.name))
+                    shutil.rmtree(legacy_labels_dir)
+
+            # 移动 classes.txt
+            if legacy_classes_file.exists():
+                if not default_classes_file.exists():
+                    shutil.move(str(legacy_classes_file), str(default_classes_file))
+                else:
+                    legacy_classes_file.unlink()
+            print(f"旧版数据集迁移成功！新路径：{default_dataset_dir}")
+        except Exception as e:
+            print(f"迁移旧数据集失败: {e}")
+
+# 执行迁移
+migrate_legacy_dataset()
+
+# 确保最少有一个 default 数据集存在
+labeling_dir = WORKSPACE_DIR / "datasets" / "labeling"
+default_dir = labeling_dir / "default"
+default_images_dir = default_dir / "images"
+default_labels_dir = default_dir / "labels"
+default_classes_file = default_dir / "classes.txt"
+
+default_images_dir.mkdir(parents=True, exist_ok=True)
+default_labels_dir.mkdir(parents=True, exist_ok=True)
+if not default_classes_file.exists():
+    with open(default_classes_file, "w", encoding="utf-8") as f:
         f.write("pig\n")
 
-# 挂载标注图片静态资源（使得前端可以直接渲染本地图片）
-app.mount("/labeling_images", StaticFiles(directory=str(labeling_images_dir)), name="labeling_images")
+# 挂载标注图片静态资源（使得前端可以直接渲染整个 labeling 下所有子数据集的图片）
+app.mount("/labeling_images", StaticFiles(directory=str(labeling_dir)), name="labeling_images")
 
 # 初始化训练管理器
 trainer = YOLOTrainer(str(WORKSPACE_DIR))
@@ -60,6 +109,7 @@ class TrainStartRequest(BaseModel):
     imgsz: int = Field(default=960, ge=32, le=2048, description="输入图像尺寸")
     device: str = Field(default="0", description="训练设备：cpu, 0, 1, 0,1 等")
     split_ratio: str = Field(default="8:1:1", description="数据集划分比例 (train:val:test)")
+    dataset: str = Field(default="default", description="训练选择的数据集")
     # 数据增强配置
     mosaic: float = Field(default=0.5, ge=0.0, le=1.0, description="Mosaic 比例")
     mixup: float = Field(default=0.0, ge=0.0, le=1.0, description="MixUp 比例")
@@ -90,8 +140,61 @@ def get_status():
     """获取训练状态和进度数据"""
     return trainer.get_status()
 
+# ==========================================
+# 数据集管理接口
+# ==========================================
+
+@app.get("/api/labeling/datasets")
+def get_datasets():
+    labeling_dir = WORKSPACE_DIR / "datasets" / "labeling"
+    labeling_dir.mkdir(parents=True, exist_ok=True)
+    
+    datasets = []
+    for item in labeling_dir.iterdir():
+        if item.is_dir() and not item.name.startswith("."):
+            if (item / "images").exists() or item.name == "default":
+                datasets.append(item.name)
+    
+    if "default" in datasets:
+        datasets.remove("default")
+        datasets.insert(0, "default")
+    else:
+        datasets.insert(0, "default")
+        
+    return {"datasets": datasets}
+
+class CreateDatasetRequest(BaseModel):
+    name: str = Field(..., description="数据集名称，仅限字母、数字、下划线、连字符和中文")
+
+@app.post("/api/labeling/datasets")
+def create_dataset(req: CreateDatasetRequest):
+    import re
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="数据集名称不能为空")
+    
+    if not re.match(r'^[\u4e00-\u9fa5a-zA-Z0-9_-]+$', name):
+        raise HTTPException(status_code=400, detail="数据集名称仅能包含中文、字母、数字、下划线和连字符")
+        
+    if name in ["images", "labels", "classes.txt", "temp_config.json", "temp_run.py", "processed"]:
+        raise HTTPException(status_code=400, detail="不能使用保留词作为数据集名称")
+        
+    dataset_path = WORKSPACE_DIR / "datasets" / "labeling" / name
+    if dataset_path.exists():
+        raise HTTPException(status_code=400, detail="该数据集名称已存在")
+        
+    try:
+        (dataset_path / "images").mkdir(parents=True, exist_ok=True)
+        (dataset_path / "labels").mkdir(parents=True, exist_ok=True)
+        with open(dataset_path / "classes.txt", "w", encoding="utf-8") as f:
+            f.write("pig\n")
+            
+        return {"status": "success", "message": f"数据集 '{name}' 创建成功"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建数据集失败: {str(e)}")
+
 @app.get("/api/sysinfo")
-def get_sysinfo():
+def get_sysinfo(dataset: str = "default"):
     """获取服务器系统硬件和数据集概要信息"""
     # 1. 硬件信息
     cpu_percent = psutil.cpu_percent(interval=None)
@@ -113,7 +216,7 @@ def get_sysinfo():
 
     # 2. 数据集状态判定 (zip 或者是本地标注目录)
     zip_file = WORKSPACE_DIR / "datasets" / "赶猪通道图集_yolo.zip"
-    local_img_dir = WORKSPACE_DIR / "datasets" / "labeling" / "images"
+    local_img_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images"
     
     dataset_status = "missing"
     dataset_size_mb = 0.0
@@ -131,7 +234,7 @@ def get_sysinfo():
     elif local_images_count > 0:
         dataset_status = "ready"
         dataset_size_mb = 0.0
-        dataset_path_str = f"本地标注数据集 ({local_images_count}张图片)"
+        dataset_path_str = f"本地标注数据集 [{dataset}] ({local_images_count}张图片)"
 
     return {
         "cpu_percent": cpu_percent,
@@ -249,10 +352,10 @@ predictor = LabelingPredictor(WORKSPACE_DIR)
 
 # 1. 获取图片列表
 @app.get("/api/labeling/images")
-def get_labeling_images():
+def get_labeling_images(dataset: str = "default"):
     image_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
-    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / "images"
-    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / "labels"
+    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images"
+    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "labels"
     
     images_dir.mkdir(parents=True, exist_ok=True)
     labels_dir.mkdir(parents=True, exist_ok=True)
@@ -293,8 +396,8 @@ def get_labeling_images():
 
 # 2. 上传图片
 @app.post("/api/labeling/upload")
-async def upload_labeling_images(files: List[UploadFile] = File(...)):
-    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / "images"
+async def upload_labeling_images(dataset: str = "default", files: List[UploadFile] = File(...)):
+    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     
     saved_files = []
@@ -313,9 +416,9 @@ async def upload_labeling_images(files: List[UploadFile] = File(...)):
 
 # 3. 删除图片
 @app.delete("/api/labeling/image/{name}")
-def delete_labeling_image(name: str):
-    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / "images"
-    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / "labels"
+def delete_labeling_image(name: str, dataset: str = "default"):
+    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images"
+    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "labels"
     
     img_path = images_dir / name
     if img_path.exists():
@@ -329,14 +432,21 @@ def delete_labeling_image(name: str):
 
 # 4. 获取已有标注和 classes 列表
 @app.get("/api/labeling/labels/{name}")
-def get_labeling_labels(name: str):
-    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / "labels"
-    classes_file = WORKSPACE_DIR / "datasets" / "labeling" / "classes.txt"
+def get_labeling_labels(name: str, dataset: str = "default"):
+    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "labels"
+    classes_file = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "classes.txt"
     
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    classes_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 确保 classes.txt 存在
+    if not classes_file.exists():
+        with open(classes_file, "w", encoding="utf-8") as f:
+            f.write("pig\n")
+            
     classes = ["pig"]
-    if classes_file.exists():
-        with open(classes_file, "r", encoding="utf-8", errors="ignore") as f:
-            classes = [line.strip() for line in f if line.strip()]
+    with open(classes_file, "r", encoding="utf-8", errors="ignore") as f:
+        classes = [line.strip() for line in f if line.strip()]
             
     label_path = labels_dir / (Path(name).stem + ".txt")
     polygons = []
@@ -368,9 +478,10 @@ def get_labeling_labels(name: str):
     }
 
 # 5. 保存标注
+# 5. 保存标注
 @app.post("/api/labeling/save")
-def save_labeling_labels(req: SaveAnnotationRequest):
-    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / "labels"
+def save_labeling_labels(req: SaveAnnotationRequest, dataset: str = "default"):
+    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "labels"
     labels_dir.mkdir(parents=True, exist_ok=True)
     
     label_path = labels_dir / (Path(req.name).stem + ".txt")
@@ -401,9 +512,9 @@ def save_labeling_labels(req: SaveAnnotationRequest):
 
 # 5.1 保存为负样本并重命名
 @app.post("/api/labeling/save_negative")
-def save_labeling_negative(req: SaveNegativeRequest):
-    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / "images"
-    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / "labels"
+def save_labeling_negative(req: SaveNegativeRequest, dataset: str = "default"):
+    images_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images"
+    labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "labels"
     
     img_path = images_dir / req.name
     if not img_path.exists():
@@ -471,25 +582,97 @@ def save_labeling_negative(req: SaveNegativeRequest):
         "new_name": new_img_name
     }
 
-# 6. 获取和更新 Classes
+# 6. 获取和更新 Classes，并提供级联标签删除清洗
 @app.post("/api/labeling/classes")
-def update_labeling_classes(req: ClassesUpdateRequest):
-    classes_file = WORKSPACE_DIR / "datasets" / "labeling" / "classes.txt"
+def update_labeling_classes(req: ClassesUpdateRequest, dataset: str = "default"):
+    dataset_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset
+    classes_file = dataset_dir / "classes.txt"
+    labels_dir = dataset_dir / "labels"
+    
+    # 读取旧的类别
+    old_classes = []
+    if classes_file.exists():
+        with open(classes_file, "r", encoding="utf-8", errors="ignore") as f:
+            old_classes = [line.strip() for line in f if line.strip()]
+            
+    # 过滤空项
+    new_classes = [cls.strip() for cls in req.classes if cls.strip()]
+    if not new_classes:
+        raise HTTPException(status_code=400, detail="类别列表不能为空，必须保留至少一个分类标签")
+        
+    # 比对新旧列表，找出被删除的类别索引
+    deleted_indices = []
+    for idx, old_cls in enumerate(old_classes):
+        if old_cls not in new_classes:
+            deleted_indices.append(idx)
+            
+    # 执行类别写入
+    dataset_dir.mkdir(parents=True, exist_ok=True)
     with open(classes_file, "w", encoding="utf-8") as f:
-        for cls in req.classes:
-            f.write(f"{cls.strip()}\n")
-    return {"status": "success", "message": "类别列表更新成功"}
+        for cls in new_classes:
+            f.write(f"{cls}\n")
+            
+    # 若有被删除的类别，且 labels 目录存在，对所有标注进行级联清洗
+    if deleted_indices and labels_dir.exists():
+        deleted_indices.sort(reverse=True)
+        
+        for label_file in labels_dir.glob("*.txt"):
+            if not label_file.is_file():
+                continue
+            
+            cleaned_lines = []
+            modified = False
+            try:
+                with open(label_file, "r", encoding="utf-8", errors="ignore") as lf:
+                    lines = lf.readlines()
+                    
+                for line in lines:
+                    parts = line.strip().split()
+                    if not parts:
+                        continue
+                    
+                    try:
+                        class_id = int(parts[0])
+                    except ValueError:
+                        cleaned_lines.append(line)
+                        continue
+                        
+                    # 检查 class_id 是否是被删除的类别
+                    if class_id in deleted_indices:
+                        modified = True
+                        continue
+                    
+                    # 调整大于被删类别的 class_id
+                    shift = sum(1 for d_idx in deleted_indices if class_id > d_idx)
+                    if shift > 0:
+                        class_id -= shift
+                        parts[0] = str(class_id)
+                        modified = True
+                        
+                    cleaned_lines.append(" ".join(parts) + "\n")
+                    
+                # 如果发生修改，写回标签文件
+                if modified:
+                    if cleaned_lines:
+                        with open(label_file, "w", encoding="utf-8") as lf:
+                            lf.writelines(cleaned_lines)
+                    else:
+                        label_file.unlink()
+            except Exception as e:
+                print(f"清洗标签文件 {label_file.name} 出错: {e}")
+                
+    return {"status": "success", "message": "类别列表更新成功，标签清洗完毕"}
 
 # 7. 一键自动检测 (YOLO-seg)
 @app.post("/api/labeling/auto_detect")
-def auto_detect_polygons(req: Dict[str, str]):
+def auto_detect_polygons(req: Dict[str, str], dataset: str = "default"):
     name = req.get("name")
     model_path = req.get("model_path") # 可选特定权重路径
     
     if not name:
         raise HTTPException(status_code=400, detail="图片名称缺失")
         
-    image_path = WORKSPACE_DIR / "datasets" / "labeling" / "images" / name
+    image_path = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images" / name
     if not image_path.exists():
         raise HTTPException(status_code=404, detail="图片不存在")
         
@@ -563,8 +746,8 @@ def get_labeling_models():
 
 # 8. SAM 辅助点击预测
 @app.post("/api/labeling/sam_predict")
-def sam_predict_polygons(req: SAMPredictRequest):
-    image_path = WORKSPACE_DIR / "datasets" / "labeling" / "images" / req.name
+def sam_predict_polygons(req: SAMPredictRequest, dataset: str = "default"):
+    image_path = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images" / req.name
     if not image_path.exists():
         raise HTTPException(status_code=404, detail="图片不存在")
         

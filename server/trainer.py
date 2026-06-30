@@ -158,7 +158,7 @@ class YOLOTrainer:
                 val_ratio=val_r,
                 test_ratio=test_r,
                 seed=42,
-                local_dataset_dir=str(self.workspace_dir / "datasets" / "labeling")
+                local_dataset_dir=str(self.workspace_dir / "datasets" / "labeling" / config.get("dataset", "default"))
             )
             
             data_yaml_path = split_res["data_yaml"]
