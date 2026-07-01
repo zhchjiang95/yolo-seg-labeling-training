@@ -319,7 +319,12 @@
         <div class="glass-card progress-panel">
           <!-- 1. 正在训练时的头部 -->
           <div v-if="isTraining" class="progress-header">
-            <span style="font-weight: 600; font-size: 16px;">训练进度概览</span>
+            <span style="font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+              训练进度概览
+              <span v-if="trainStatus.dataset" class="history-badge">
+                数据集: {{ trainStatus.dataset }}
+              </span>
+            </span>
             <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; color: var(--primary);">
               Epoch: {{ trainStatus.progress.epoch }} / {{ trainStatus.progress.total_epochs }} ({{ trainStatus.progress.percent }}%)
             </span>
@@ -955,6 +960,7 @@ const sysInfo = reactive({
 
 const trainStatus = reactive({
   state: 'idle',
+  dataset: '',
   progress: {
     epoch: 0,
     total_epochs: 300,

@@ -21,6 +21,7 @@ class YOLOTrainer:
         # 线程安全的状态变量
         self.state = "idle"  # 状态包括: idle (空闲), preparing (数据集准备中), training (训练中), completed (已完成), failed (失败), stopped (已停止)
         self.process: Optional[subprocess.Popen] = None
+        self.dataset = ""  # 当前正在训练的数据集名称
         self.progress = {
             "epoch": 0,
             "total_epochs": 0,
@@ -66,7 +67,8 @@ class YOLOTrainer:
             
             return {
                 "state": self.state,
-                "progress": self.progress.copy()
+                "progress": self.progress.copy(),
+                "dataset": self.dataset
             }
 
     def start_training(self, train_config: Dict[str, Any]) -> bool:
@@ -80,6 +82,7 @@ class YOLOTrainer:
                 return False
 
             self.state = "preparing"
+            self.dataset = train_config.get("dataset", "default")  # 记录当前训练的数据集
             # 初始化进度信息
             self.progress = {
                 "epoch": 0,
