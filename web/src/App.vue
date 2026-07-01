@@ -594,7 +594,7 @@
                   <!-- 默认最佳模型 -->
                   <button class="dropdown-item" @click="autoDetect(null)" :disabled="isAutoDetecting">
                     <span style="font-weight: 600; color: var(--primary);">使用系统默认权重</span>
-                    <span class="dropdown-item-path">自动寻找 runs/best.pt 或者是 yolo26s-seg.pt</span>
+                    <span class="dropdown-item-path">自动寻找 runs/best.pt 或者 yolo26s-seg.pt</span>
                   </button>
                   <!-- 扫描出来的模型 -->
                   <button v-for="model in modelsList" :key="model.path" class="dropdown-item" @click="autoDetect(model.path)" :disabled="isAutoDetecting">
@@ -617,14 +617,14 @@
 
           <!-- 清理与保存动作组 -->
           <div style="display: flex; gap: 8px;">
+            <button class="tool-btn" @click="saveAsNegative" :disabled="!currentImage" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; border-color: transparent;" title="保存此图片为负样本，标注将清空且重命名图片">
+              保存为负样本
+            </button>
             <button class="tool-btn" @click="clearPolygons" :disabled="polygons.length === 0" title="清空当前图片所有多边形">
               清空
             </button>
             <button class="tool-btn active" @click="saveAnnotations" :disabled="!currentImage" style="background: var(--primary-gradient);">
               保存标注
-            </button>
-            <button class="tool-btn" @click="saveAsNegative" :disabled="!currentImage" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; border-color: transparent;" title="保存此图片为负样本，标注将清空且重命名图片">
-              保存为负样本
             </button>
           </div>
         </div>
@@ -1875,6 +1875,11 @@ const getNextImage = () => {
 const saveAnnotations = async () => {
   if (!currentImage.value) return;
   
+  // 主动让当前焦点元素失去焦点，防止空格键重复触发
+  if (document.activeElement && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
+  
   // 提前计算好下一张图片
   const nextImg = getNextImage();
   
@@ -1920,6 +1925,12 @@ const saveAnnotations = async () => {
 
 const saveAsNegative = async () => {
   if (!currentImage.value) return;
+  
+  // 主动让当前焦点元素失去焦点，防止空格键重复触发
+  if (document.activeElement && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
+  
   if (polygons.value.length > 0) {
     if (!confirm('警告：此操作将清空当前图片的所有标注多边形。确认继续吗？')) {
       return;
@@ -1978,8 +1989,15 @@ const saveAsNegative = async () => {
 const handleKeyDown = (e) => {
   if (currentTab.value !== 'label') return;
   
+  // 判断当前焦点是否在输入框内
+  const tagName = e.target && e.target.tagName;
+  const isInput = tagName === 'INPUT' || tagName === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+  
   if (e.key === ' ') {
-    spacePressed.value = true;
+    if (!isInput) {
+      e.preventDefault(); // 阻止空格键触发当前焦点按钮的点击事件（标准 HTML 行为中，聚焦按钮按空格会触发 click）
+      spacePressed.value = true;
+    }
   } else if (e.key === 'Escape') {
     if (activeTool.value === 'draw') {
       activePolygonPoints.value = [];
