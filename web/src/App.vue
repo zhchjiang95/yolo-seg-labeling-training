@@ -613,6 +613,19 @@
               </svg>
               手形拖拽
             </button>
+            <button class="tool-btn" :class="{ active: activeTool === 'eraser' }" @click="setTool('eraser')" title="橡皮擦：左键涂抹擦除顶点，[ ] 键调节半径">
+              <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L20 13L20 20Z"/>
+                <line x1="18" y1="9" x2="12" y2="15"/>
+              </svg>
+              橡皮擦
+            </button>
+            <!-- 橡皮擦半径调节滑动条 -->
+            <div v-if="activeTool === 'eraser' || (activeTool === 'edit' && altPressed)" style="display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; border-left: 1px solid var(--border-color); padding-left: 8px;">
+              <span style="font-size: 11px; color: var(--text-muted); white-space: nowrap;">擦除半径:</span>
+              <input type="range" v-model.number="eraserRadius" min="5" max="100" step="1" style="width: 70px; height: 4px; accent-color: var(--primary);" />
+              <span style="font-size: 11px; font-family: monospace; color: var(--text-secondary); min-width: 25px;">{{ eraserRadius }}px</span>
+            </div>
           </div>
 
           <!-- 清理与保存动作组 -->
@@ -631,9 +644,10 @@
 
         <!-- 标注操作提示语 -->
         <div v-if="currentImage" style="background: rgba(99,102,241,0.06); padding: 8px 12px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; border-left: 3px solid var(--primary);">
-          <span v-if="activeTool === 'edit'">💡 <strong>编辑模式</strong>: 点击多边形选中，拖动顶点微调；拖动边线上的<strong>半透明中点</strong>可直接插入新顶点并拖动；双击顶点删除该点；按 Delete 键删除选中多边形。</span>
+          <span v-if="activeTool === 'edit'">💡 <strong>编辑模式</strong>: 点击多边形选中，拖动顶点微调；拖动边线上的<strong>半透明中点</strong>可直接插入新顶点；双击顶点删除点；<strong>按住 Alt 键拖动鼠标可直接涂抹擦除顶点</strong>；Delete 键删除选中多边形。</span>
           <span v-else-if="activeTool === 'draw'">✏️ <strong>手动打点</strong>: 鼠标左键在猪只边缘点击，绘制多边形轮廓。双击，或再次点击<strong>第一个点</strong>可闭合多边形完成创建。Esc 取消。</span>
           <span v-else-if="activeTool === 'sam'">🔮 <strong>SAM智能辅助</strong>: 鼠标<strong>左键</strong>点击猪只区域生成绿点(指明前景)，<strong>右键</strong>点击背景生成红点(排除背景)。实时生成紫色预览虚线，满意后按 <strong>Enter 键</strong> 确认转化为多边形，Esc 撤销。</span>
+          <span v-else-if="activeTool === 'eraser'">🧽 <strong>橡皮擦模式</strong>: 按住鼠标左键并在要擦除的顶点区域内拖动涂抹，即可快速成批清除顶点。使用 <strong>[</strong> 和 <strong>]</strong> 键或滑块可调节擦除半径。</span>
           <span v-else-if="activeTool === 'pan'">🤚 <strong>手形拖拽</strong>: 按住鼠标左键并移动可以自由平移画布。在任何模式下，<strong>滚动鼠标滚轮</strong>均可缩放画布，<strong>按住空格键</strong>或使用<strong>鼠标右键拖动</strong>也可以随时平移。</span>
         </div>
 
@@ -658,7 +672,7 @@
                 class="svg-polygon"
                 :class="{ active: activePolyIndex === polyIndex }"
                 :style="{ fill: getPolyColor(poly.class_id) + '22', stroke: getPolyColor(poly.class_id) }"
-                @mousedown.stop="selectPolygon(polyIndex)"
+                @mousedown="handlePolygonMouseDown($event, polyIndex)"
               />
 
               <!-- 2. 编辑模式下：渲染当前选中的多边形顶点与加宽边线 hitbox -->
@@ -750,6 +764,15 @@
                   :title="prompt.label === 1 ? '前景正点' : '背景负点'"
                 />
               </g>
+
+              <!-- 5. 橡皮擦涂抹范围指示器 -->
+              <circle
+                v-if="eraserMousePos && (activeTool === 'eraser' || (activeTool === 'edit' && altPressed))"
+                :cx="eraserMousePos[0]"
+                :cy="eraserMousePos[1]"
+                :r="eraserRadius"
+                class="svg-eraser-pointer"
+              />
             </svg>
           </div>
 
@@ -837,7 +860,7 @@
                 </svg>
               </button>
 
-              <button class="file-delete-btn" style="opacity: 1;" @click.stop="deletePolygon(idx)" title="删除此多边形">
+              <button class="file-delete-btn" style="opacity: 1;" @dblclick.stop="deletePolygon(idx)" title="双击删除此多边形">
                 <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="3 6 5 6 21 6"/>
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
@@ -1139,7 +1162,13 @@ const imageList = ref([]);
 const searchQuery = ref('');
 const filterStatus = ref('unlabeled'); // labeled | unlabeled | negative
 const currentImage = ref(null);
-const activeTool = ref('edit'); // edit | draw | sam | pan
+const activeTool = ref('edit'); // edit | draw | sam | pan | eraser
+
+// 橡皮擦相关状态
+const eraserRadius = ref(20); // 橡皮擦半径，单位像素
+const isErasing = ref(false); // 是否正在擦除
+const altPressed = ref(false); // Alt 键是否被按下
+const eraserMousePos = ref(null); // 橡皮擦鼠标坐标 [x, y]
 
 // 类别、多边形与模型列表
 const classes = ref(['pig']);
@@ -1411,6 +1440,8 @@ const setTool = (tool) => {
   activePolygonPoints.value = [];
   samPrompts.value = [];
   samPreviewPolygon.value = null;
+  isErasing.value = false;
+  eraserMousePos.value = null;
 };
 
 // ==========================================
@@ -1502,6 +1533,22 @@ const handleSVGMouseDown = (e) => {
     const [x, y] = getSVGCoords(e);
     samPrompts.value.push({ x, y, label: 0 }); // 0: 负点（背景）
     triggerSAMPredict();
+    return;
+  }
+
+  // 橡皮擦左键涂抹
+  if (e.button === 0 && (activeTool.value === 'eraser' || (activeTool.value === 'edit' && altPressed.value))) {
+    e.stopPropagation();
+    e.preventDefault();
+    if (activePolyIndex.value === null) {
+      showToast('请先在右侧列表或画布中选择一个多边形实例再进行擦除', 'warning');
+      return;
+    }
+    isErasing.value = true;
+    const [x, y] = getSVGCoords(e);
+    erasePointsAt(x, y);
+    
+    window.addEventListener('mouseup', stopErasingGlobal);
   }
 };
 
@@ -1543,11 +1590,17 @@ const handleSVGClick = (e) => {
 };
 
 const updateMousePos = (e) => {
+  const [x, y] = getSVGCoords(e);
   if (activeTool.value === 'draw' && activePolygonPoints.value.length > 0) {
-    const [x, y] = getSVGCoords(e);
     mousePos.value = [x, y];
   } else {
     mousePos.value = null;
+  }
+
+  if (activeTool.value === 'eraser' || (activeTool.value === 'edit' && altPressed.value)) {
+    eraserMousePos.value = [x, y];
+  } else {
+    eraserMousePos.value = null;
   }
 };
 
@@ -1566,8 +1619,25 @@ const finishDrawing = () => {
 // ==========================================
 
 const selectPolygon = (idx) => {
-  if (activeTool.value === 'edit') {
+  if (activeTool.value === 'edit' || activeTool.value === 'eraser') {
     activePolyIndex.value = idx;
+  }
+};
+
+const handlePolygonMouseDown = (e, polyIndex) => {
+  if (e.button === 0) {
+    if (activeTool.value === 'edit' || activeTool.value === 'eraser') {
+      e.stopPropagation();
+      selectPolygon(polyIndex);
+    }
+    
+    if (activeTool.value === 'eraser') {
+      e.preventDefault();
+      isErasing.value = true;
+      const [x, y] = getSVGCoords(e);
+      erasePointsAt(x, y);
+      window.addEventListener('mouseup', stopErasingGlobal);
+    }
   }
 };
 
@@ -1631,6 +1701,34 @@ const stopDragPoint = () => {
   dragInfo.value = null;
   window.removeEventListener('mousemove', handleDragPoint);
   window.removeEventListener('mouseup', stopDragPoint);
+};
+
+const erasePointsAt = (x, y) => {
+  if (activePolyIndex.value === null || !polygons.value[activePolyIndex.value]) return;
+  const poly = polygons.value[activePolyIndex.value];
+  const radius = eraserRadius.value;
+  
+  const remainingPoints = poly.points.filter(pt => {
+    const ptX = pt[0] * imgNaturalWidth.value;
+    const ptY = pt[1] * imgNaturalHeight.value;
+    const dist = Math.hypot(ptX - x, ptY - y);
+    return dist > radius;
+  });
+  
+  if (remainingPoints.length !== poly.points.length) {
+    if (remainingPoints.length < 3) {
+      deletePolygon(activePolyIndex.value);
+      isErasing.value = false;
+      showToast('多边形顶点已全部擦除，已自动删除该多边形', 'info');
+    } else {
+      polygons.value[activePolyIndex.value].points = remainingPoints;
+    }
+  }
+};
+
+const stopErasingGlobal = () => {
+  isErasing.value = false;
+  window.removeEventListener('mouseup', stopErasingGlobal);
 };
 
 const deletePoint = (polyIndex, ptIndex) => {
@@ -1993,6 +2091,24 @@ const handleKeyDown = (e) => {
   const tagName = e.target && e.target.tagName;
   const isInput = tagName === 'INPUT' || tagName === 'TEXTAREA' || (e.target && e.target.isContentEditable);
   
+  if (e.key === 'Alt') {
+    if (!isInput) {
+      e.preventDefault();
+      altPressed.value = true;
+    }
+  }
+
+  if (e.key === '[' || e.key === ']') {
+    if (!isInput && (activeTool.value === 'eraser' || (activeTool.value === 'edit' && altPressed.value))) {
+      e.preventDefault();
+      if (e.key === '[') {
+        eraserRadius.value = Math.max(5, eraserRadius.value - 5);
+      } else {
+        eraserRadius.value = Math.min(100, eraserRadius.value + 5);
+      }
+    }
+  }
+
   if (e.key === ' ') {
     if (!isInput) {
       e.preventDefault(); // 阻止空格键触发当前焦点按钮的点击事件（标准 HTML 行为中，聚焦按钮按空格会触发 click）
@@ -2021,11 +2137,25 @@ const handleKeyDown = (e) => {
 const handleKeyUp = (e) => {
   if (e.key === ' ') {
     spacePressed.value = false;
+  } else if (e.key === 'Alt') {
+    altPressed.value = false;
+    isErasing.value = false;
+    eraserMousePos.value = null;
   }
 };
 
 const handleMouseMoveGlobal = (e) => {
   updateMousePos(e);
+  if (isErasing.value && eraserMousePos.value) {
+    erasePointsAt(eraserMousePos.value[0], eraserMousePos.value[1]);
+  }
+};
+
+const handleWindowBlur = () => {
+  altPressed.value = false;
+  isErasing.value = false;
+  spacePressed.value = false;
+  eraserMousePos.value = null;
 };
 
 // 切换 TAB 时刷新数据
@@ -2037,11 +2167,13 @@ watch(currentTab, (newTab) => {
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMoveGlobal);
+    window.addEventListener('blur', handleWindowBlur);
   } else {
     fetchSysInfo();
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('keyup', handleKeyUp);
     window.removeEventListener('mousemove', handleMouseMoveGlobal);
+    window.removeEventListener('blur', handleWindowBlur);
   }
 });
 
@@ -2088,9 +2220,9 @@ onMounted(async () => {
     fetchImageList();
     fetchModelsList();
     window.addEventListener('keydown', handleKeyDown);
-
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMoveGlobal);
+    window.addEventListener('blur', handleWindowBlur);
   }
 });
 
@@ -2102,6 +2234,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
   window.removeEventListener('mousemove', handleMouseMoveGlobal);
+  window.removeEventListener('blur', handleWindowBlur);
 });
 </script>
 
@@ -2114,5 +2247,13 @@ kbd {
   padding: 1px 4px;
   font-family: 'Outfit', sans-serif;
   font-size: 10px;
+}
+
+.svg-eraser-pointer {
+  fill: rgba(239, 68, 68, 0.12);
+  stroke: #ef4444;
+  stroke-width: 1.2px;
+  stroke-dasharray: 3 3;
+  pointer-events: none; /* 穿透鼠标事件 */
 }
 </style>
