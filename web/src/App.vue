@@ -1072,7 +1072,7 @@ const handleStartTrain = async () => {
       const imgRes = await fetch(`${API_BASE}/api/labeling/images?dataset=${currentDataset.value}`);
       if (imgRes.ok) {
         const list = await imgRes.json();
-        const unlabeledCount = list.filter(img => !img.labeled).length;
+        const unlabeledCount = list.filter(img => img.status === "unlabeled").length;
         if (unlabeledCount > 0) {
           if (!confirm(`尚有 ${unlabeledCount} 张图片未标注，未标注的图片将作为背景训练。是否继续？`)) {
             logs.value.push('[SYSTEM] 训练启动已被取消。');
