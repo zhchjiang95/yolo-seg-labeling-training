@@ -148,8 +148,8 @@ def get_status():
 def download_best_weight():
     """下载最近一次训练生成的最佳权重文件 best.pt"""
     run_dirs = [
-        WORKSPACE_DIR / "runs" / "segment" / "yolo26s_train",
-        WORKSPACE_DIR / "runs" / "yolo26s_train"
+        WORKSPACE_DIR / "runs" / "yolo26s_train",
+        WORKSPACE_DIR / "runs" / "segment" / "yolo26s_train"
     ]
     
     best_pt = None
@@ -338,8 +338,14 @@ class LabelingPredictor:
             return self.yolo_models[full_path_str]
 
         # 2. 默认模型加载逻辑
-        best_pt = self.workspace_dir / "runs" / "segment" / "yolo26s_train" / "weights" / "best.pt"
-        if best_pt.exists():
+        best_pt = None
+        for d in [self.workspace_dir / "runs" / "yolo26s_train", self.workspace_dir / "runs" / "segment" / "yolo26s_train"]:
+            p = d / "weights" / "best.pt"
+            if p.exists():
+                best_pt = p
+                break
+                
+        if best_pt:
             default_path = best_pt
         else:
             default_path = self.workspace_dir / "models" / "yolo26s-seg.pt"

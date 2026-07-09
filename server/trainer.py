@@ -168,7 +168,7 @@ class YOLOTrainer:
             self._write_log(f"[SYSTEM] 数据集自动准备完成！已写入 data.yaml: {data_yaml_path}\n")
 
             # 提前创建训练结果目录并保存训练元数据（如所用数据集），方便后续空闲时查询
-            save_dir = self.workspace_dir / "runs" / "segment" / "yolo26s_train"
+            save_dir = self.workspace_dir / "runs" / "yolo26s_train"
             save_dir.mkdir(parents=True, exist_ok=True)
             try:
                 train_meta = {
@@ -400,15 +400,23 @@ if __name__ == '__main__':
         获取最近一次训练的结果信息（指标、数据集名称、模型状态等）
         """
         run_dirs = [
-            self.workspace_dir / "runs" / "segment" / "yolo26s_train",
-            self.workspace_dir / "runs" / "yolo26s_train"
+            self.workspace_dir / "runs" / "yolo26s_train",
+            self.workspace_dir / "runs" / "segment" / "yolo26s_train"
         ]
         
         target_dir = None
+        # 优先使用包含核心指标文件 results.csv 的目录
         for d in run_dirs:
-            if d.exists() and d.is_dir():
+            if d.exists() and d.is_dir() and (d / "results.csv").exists():
                 target_dir = d
                 break
+                
+        # 如果都没有 results.csv，则退而求其次选择存在的目录（例如仅有提前写入的 train_meta.json）
+        if not target_dir:
+            for d in run_dirs:
+                if d.exists() and d.is_dir():
+                    target_dir = d
+                    break
                 
         if not target_dir:
             return {"has_data": False}
