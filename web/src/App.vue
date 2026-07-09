@@ -586,7 +586,7 @@
                 <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 6v6l4 2"/>
                 </svg>
-                一键模型识别
+                模型识别
                 <svg style="width: 8px; height: 8px; margin-left: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                   <polyline points="6 9 12 15 18 9"/>
                 </svg>
@@ -616,7 +616,7 @@
               <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M5 10V8a7 7 0 0 1 14 0v2M12 3v5"/>
               </svg>
-              手形拖拽
+              拖拽
             </button>
             <button class="tool-btn" :class="{ active: activeTool === 'eraser' }" @click="setTool('eraser')" title="橡皮擦：左键涂抹擦除顶点，[ ] 键调节半径">
               <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
