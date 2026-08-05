@@ -579,10 +579,10 @@
             </button>
 
 
-            <!-- 一键模型识别悬停下拉列表 (移到左侧工具组并齐左) -->
+            <!-- 一键模型识别悬停下拉列表 (高亮亮紫科技感按钮) -->
             <div class="dropdown-wrapper">
-              <button class="tool-btn" :disabled="!currentImage || isAutoDetecting" style="border-color: var(--success); color: var(--success);" title="鼠标悬浮选择模型识别全图">
-                <span v-if="isAutoDetecting" class="status-dot active" style="margin-right: 4px;"></span>
+              <button class="tool-btn" :disabled="!currentImage || isAutoDetecting" style="border-color: #a855f7; color: #a855f7; background: rgba(168, 85, 247, 0.08); font-weight: 600;" title="鼠标悬浮选择模型识别全图">
+                <span v-if="isAutoDetecting" class="status-dot active" style="margin-right: 4px; background: #a855f7;"></span>
                 <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 6v6l4 2"/>
                 </svg>
@@ -598,7 +598,7 @@
                 <div class="dropdown-list-scroller">
                   <!-- 默认最佳模型 -->
                   <button class="dropdown-item" @click="autoDetect(null)" :disabled="isAutoDetecting">
-                    <span style="font-weight: 600; color: var(--primary);">使用系统默认权重</span>
+                    <span style="font-weight: 600; color: #a855f7;">使用系统默认权重</span>
                     <span class="dropdown-item-path">自动寻找 runs/best.pt 或者 yolo26s-seg.pt</span>
                   </button>
                   <!-- 扫描出来的模型 -->
@@ -625,12 +625,6 @@
               </svg>
               橡皮擦
             </button>
-            <!-- 橡皮擦半径调节滑动条 -->
-            <div v-if="activeTool === 'eraser' || (activeTool === 'edit' && altPressed)" style="display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; border-left: 1px solid var(--border-color); padding-left: 8px;">
-              <span style="font-size: 11px; color: var(--text-muted); white-space: nowrap;">擦除半径:</span>
-              <input type="range" v-model.number="eraserRadius" min="5" max="100" step="1" style="width: 70px; height: 4px; accent-color: var(--primary);" />
-              <span style="font-size: 11px; font-family: monospace; color: var(--text-secondary); min-width: 25px;">{{ eraserRadius }}px</span>
-            </div>
           </div>
 
           <!-- 清理与保存动作组 -->
@@ -644,6 +638,38 @@
             <button class="tool-btn active" @click="saveAnnotations" :disabled="!currentImage" style="background: var(--primary-gradient);">
               保存标注
             </button>
+          </div>
+        </div>
+
+        <!-- 标注辅助属性配置栏 (独立的工具栏第二行) -->
+        <div class="canvas-subtoolbar">
+          <!-- 属性 1: 标注填充透明度 -->
+          <div class="subtoolbar-item">
+            <svg style="width: 13px; height: 13px; color: var(--primary);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+            </svg>
+            <span class="subtoolbar-label">标注区域填充透明度:</span>
+            <input type="range" v-model.number="polyFillOpacity" min="0.1" max="0.8" step="0.05" class="subtoolbar-slider" title="调节多边形颜色填充透明度" />
+            <span class="subtoolbar-value">{{ Math.round(polyFillOpacity * 100) }}%</span>
+          </div>
+
+          <!-- 属性 2: 擦除半径 (仅橡皮擦或 Alt 涂抹模式时显示) -->
+          <div v-if="activeTool === 'eraser' || (activeTool === 'edit' && altPressed)" class="subtoolbar-item" style="border-left: 1px solid var(--border-color); padding-left: 12px; margin-left: 4px;">
+            <svg style="width: 13px; height: 13px; color: var(--warning);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="9"/>
+            </svg>
+            <span class="subtoolbar-label">橡皮擦半径:</span>
+            <input type="range" v-model.number="eraserRadius" min="5" max="100" step="1" class="subtoolbar-slider" title="调节擦除顶点半径" />
+            <span class="subtoolbar-value">{{ eraserRadius }}px</span>
+          </div>
+
+          <!-- 属性 3: 当前选中的标注分类指示 -->
+          <div class="subtoolbar-item" style="margin-left: auto;">
+            <span class="subtoolbar-label">当前标注类别:</span>
+            <span class="current-class-tag" :style="{ background: getPolyColor(activeClassIndex) + '20', color: getPolyColor(activeClassIndex), borderColor: getPolyColor(activeClassIndex) }">
+              <span class="tag-dot" :style="{ background: getPolyColor(activeClassIndex) }"></span>
+              {{ classes[activeClassIndex] || '默认类别' }}
+            </span>
           </div>
         </div>
 
@@ -676,7 +702,11 @@
                 :points="poly.points.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
                 class="svg-polygon"
                 :class="{ active: activePolyIndex === polyIndex }"
-                :style="{ fill: getPolyColor(poly.class_id) + '22', stroke: getPolyColor(poly.class_id) }"
+                :style="{
+                  fill: getPolyColor(poly.class_id),
+                  fillOpacity: activePolyIndex === polyIndex ? Math.min(polyFillOpacity + 0.2, 0.9) : polyFillOpacity,
+                  stroke: getPolyColor(poly.class_id)
+                }"
                 @mousedown="handlePolygonMouseDown($event, polyIndex)"
               />
 
@@ -712,10 +742,18 @@
 
               <!-- 3. 手动绘制模式下：绘制临时点、连线和未闭合的多边形 -->
               <g v-if="activeTool === 'draw' && activePolygonPoints.length > 0">
-                <!-- 临时绘制预览多边形 -->
+                <!-- 临时绘制预览多边形（3点及以上提供实时颜色填充预览） -->
+                <polygon
+                  v-if="activePolygonPoints.length >= 3"
+                  :points="activePolygonPoints.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
+                  class="svg-poly-temp"
+                  :style="{ fill: getPolyColor(activeClassIndex), fillOpacity: polyFillOpacity * 0.75, stroke: getPolyColor(activeClassIndex) }"
+                />
+                <!-- 临时绘制预览多边形边线 -->
                 <polyline
                   :points="activePolygonPoints.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
                   class="svg-line-temp"
+                  :style="{ stroke: getPolyColor(activeClassIndex) }"
                 />
                 <!-- 鼠标当前位置到最后一个点的虚线 -->
                 <line
@@ -725,6 +763,7 @@
                   :x2="mousePos[0]"
                   :y2="mousePos[1]"
                   class="svg-line-temp"
+                  :style="{ stroke: getPolyColor(activeClassIndex) }"
                 />
                 <!-- 首尾虚线连线预览闭合效果 -->
                 <line
@@ -750,11 +789,12 @@
 
               <!-- 4. SAM 辅助模式下：渲染交互正/负打点以及自动识别预览 -->
               <g v-if="activeTool === 'sam'">
-                <!-- SAM 预测预览多边形（动态流动虚线效果，超科技感） -->
+                <!-- SAM 预测预览多边形（动态流动虚线效果，动态适配填充透明度） -->
                 <polygon
                   v-if="samPreviewPolygon"
                   :points="samPreviewPolygon.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
                   class="svg-sam-preview"
+                  :style="{ fillOpacity: Math.max(polyFillOpacity, 0.35) }"
                 />
                 
                 <!-- 渲染用户的正负提示点 -->
@@ -1207,8 +1247,11 @@ const samPreviewPolygon = ref(null); // 归一化坐标点数组
 const isAutoDetecting = ref(false);
 const isSamPredicting = ref(false);
 
-// 颜色映射系统
-const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6', '#3b82f6', '#14b8a6', '#06b6d4'];
+// 多边形填充不透明度 (0.1 ~ 0.8，默认 0.35)
+const polyFillOpacity = ref(0.35);
+
+// 颜色映射系统 (采用高对比度、极其鲜艳高亮的对比色系，避免浅暗绿混淆)
+const colors = ['#6366f1', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#8b5cf6', '#3b82f6', '#10b981', '#f43f5e'];
 const getPolyColor = (classId) => {
   return colors[classId % colors.length];
 };

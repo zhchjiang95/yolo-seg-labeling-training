@@ -1120,21 +1120,20 @@ select:focus {
 }
 
 .svg-polygon {
-  fill: rgba(99, 102, 241, 0.12);
-  stroke: var(--primary);
-  stroke-width: 0.75px; /* 线宽缩小一半 */
-  transition: fill 0.2s;
+  stroke-width: 1.2px;
+  transition: fill-opacity 0.2s ease, stroke-width 0.2s ease, filter 0.2s ease;
   cursor: pointer;
 }
 
 .svg-polygon:hover {
-  fill: rgba(99, 102, 241, 0.25);
+  fill-opacity: 0.65 !important;
+  stroke-width: 1.6px !important;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.4));
 }
 
 .svg-polygon.active {
-  fill: rgba(139, 92, 246, 0.22);
-  stroke: #8b5cf6;
-  stroke-width: 1px; /* 线宽缩小一半 */
+  stroke-width: 2px !important;
+  filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.5));
 }
 
 .svg-point {
@@ -1169,21 +1168,20 @@ select:focus {
 .svg-line-temp {
   fill: none; /* 移除未闭合多边形的黑色填充 */
   stroke: var(--primary);
-  stroke-width: 0.75px; /* 线宽缩小一半 */
+  stroke-width: 1px;
   stroke-dasharray: 4;
 }
 
 .svg-poly-temp {
-  fill: rgba(99, 102, 241, 0.1);
-  stroke: var(--primary);
-  stroke-width: 0.75px; /* 线宽缩小一半 */
+  stroke-width: 1.2px;
   stroke-dasharray: 4;
+  transition: fill-opacity 0.2s ease;
 }
 
 .svg-sam-preview {
-  fill: rgba(167, 139, 250, 0.25);
+  fill: rgba(167, 139, 250, 0.35);
   stroke: #8b5cf6;
-  stroke-width: 1px; /* 线宽缩小一半 */
+  stroke-width: 1.5px;
   stroke-dasharray: 5 3;
   animation: dash 30s linear infinite;
 }
@@ -1309,6 +1307,67 @@ select:focus {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-top: 16px;
+}
+
+/* 标注辅助属性配置栏 (独立的工具栏第二行) */
+.canvas-subtoolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(15, 23, 42, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.dark-theme .canvas-subtoolbar {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.subtoolbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.subtoolbar-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.subtoolbar-slider {
+  width: 90px;
+  height: 4px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.subtoolbar-value {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-primary);
+  min-width: 32px;
+  font-weight: 600;
+}
+
+.current-class-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+
+.tag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
 }
 
 .tool-btn {
