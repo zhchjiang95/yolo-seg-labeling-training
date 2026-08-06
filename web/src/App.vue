@@ -612,6 +612,41 @@
                 </div>
               </div>
             </div>
+
+            <!-- Prompt 开放词汇智能识别控件块 -->
+            <div class="prompt-detect-group" style="display: flex; align-items: center; gap: 4px; background: rgba(99, 102, 241, 0.08); padding: 2px 6px; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.25);">
+              <svg style="width: 14px; height: 14px; color: var(--primary); margin-left: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              <input 
+                type="text" 
+                v-model="promptText" 
+                placeholder="输入 Prompt (如 pig)..." 
+                style="width: 120px; padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main);"
+                @keyup.enter="promptDetect"
+                title="输入想要识别的文本提示词，支持多个词汇以逗号分割"
+              />
+              <span style="font-size: 11px; color: var(--text-muted); margin-left: 2px;">Conf:</span>
+              <input 
+                type="number" 
+                v-model.number="promptConf" 
+                step="0.05" 
+                min="0.01" 
+                max="0.9" 
+                style="width: 52px; padding: 4px 4px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); text-align: center;" 
+                title="置信度阈值 (Conf Threshold)。如识别不到请将置信度调低（例如 0.1）"
+              />
+              <button 
+                class="tool-btn" 
+                :disabled="!currentImage || isPromptDetecting" 
+                style="background: var(--primary-gradient); color: #fff; border: none; padding: 4px 10px; font-weight: 600;" 
+                @click="promptDetect"
+                title="开放词汇识别：直接根据提示词识别全图目标"
+              >
+                <span v-if="isPromptDetecting" class="spinner" style="margin-right: 4px;"></span>
+                ✨ Prompt 识别
+              </button>
+            </div>
             <button class="tool-btn" :class="{ active: activeTool === 'pan' }" @click="setTool('pan')" title="手形：左键拖拽平移图片">
               <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M5 10V8a7 7 0 0 1 14 0v2M12 3v5"/>
@@ -1257,6 +1292,11 @@ const samPreviewPolygon = ref(null); // 归一化坐标点数组
 const isAutoDetecting = ref(false);
 const isSamPredicting = ref(false);
 
+// Prompt 开放词汇识别
+const promptText = ref('pig');
+const promptConf = ref(0.01); // 默认 0.01 置信度，最大化捕获全图目标
+const isPromptDetecting = ref(false);
+
 // 多边形填充不透明度 (0.1 ~ 0.8，默认 0.35)
 const polyFillOpacity = ref(0.35);
 
@@ -1873,6 +1913,58 @@ const autoDetect = async (modelPath = null) => {
     showToast('连接识别服务异常', 'error');
   } finally {
     isAutoDetecting.value = false;
+  }
+};
+
+const promptDetect = async () => {
+  if (!currentImage.value) {
+    showToast('请先在左侧选择一张图片', 'warning');
+    return;
+  }
+  const query = promptText.value.trim();
+  if (!query) {
+    showToast('请输入有效的识别 Prompt 提示词（如 pig）', 'warning');
+    return;
+  }
+
+  isPromptDetecting.value = true;
+  showToast(`正在通过 Prompt "${query}" 智能识别全图目标...`, 'info');
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/prompt_detect?dataset=${currentDataset.value}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        name: currentImage.value.name,
+        prompt: query,
+        conf: promptConf.value,
+        class_id: activeClassIndex.value
+      })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.polygons && data.polygons.length > 0) {
+        const currentTargetClass = activeClassIndex.value;
+        const newPolys = data.polygons.map(poly => ({
+          class_id: currentTargetClass,
+          points: poly.points
+        }));
+        polygons.value = [...polygons.value, ...newPolys];
+        activePolyIndex.value = null;
+        const targetClassName = classes.value[currentTargetClass] || query;
+        showToast(`✨ Prompt 识别成功！新增 ${data.polygons.length} 个实例，已标记为【${targetClassName}】`, 'success');
+      } else {
+        showToast(`未识别到符合提示词 "${query}" 的目标物体`, 'warning');
+      }
+    } else {
+      const err = await res.json();
+      showToast('Prompt 识别失败: ' + (err.detail || '接口异常'), 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('连接开放词汇识别服务异常', 'error');
+  } finally {
+    isPromptDetecting.value = false;
   }
 };
 
