@@ -774,14 +774,24 @@
                   :y2="activePolygonPoints[activePolygonPoints.length - 1][1] * imgNaturalHeight"
                   style="stroke: var(--primary); stroke-width: 1px; stroke-dasharray: 2 4; opacity: 0.6;"
                 />
+                <!-- 首点专属的高亮动态脉冲扩散圈（方便识别闭合点） -->
+                <circle
+                  v-if="activePolygonPoints.length >= 1"
+                  :cx="activePolygonPoints[0][0] * imgNaturalWidth"
+                  :cy="activePolygonPoints[0][1] * imgNaturalHeight"
+                  class="svg-first-point-pulse"
+                  @click.stop="finishDrawing"
+                  title="点击首点闭合多边形"
+                />
                 <!-- 绘制的控制点圆圈 -->
                 <circle
                   v-for="(pt, ptIndex) in activePolygonPoints"
                   :key="'draw-pt-' + ptIndex"
                   :cx="pt[0] * imgNaturalWidth"
                   :cy="pt[1] * imgNaturalHeight"
-                  :r="ptIndex === 0 ? 2.5 : 1.5"
-                  :style="ptIndex === 0 ? 'fill: rgba(16, 185, 129, 0.65); stroke: #fff; stroke-width: 1px; cursor: pointer;' : 'fill: rgba(99, 102, 241, 0.5); stroke: #fff; stroke-width: 0.8px;'"
+                  :r="ptIndex === 0 ? 4.5 : 2.0"
+                  :class="{ 'first-draw-point': ptIndex === 0 }"
+                  :style="ptIndex === 0 ? 'fill: #10b981; stroke: #ffffff; stroke-width: 1.5px; cursor: pointer;' : 'fill: rgba(99, 102, 241, 0.7); stroke: #ffffff; stroke-width: 1px;'"
                   @click.stop="ptIndex === 0 ? finishDrawing() : null"
                   :title="ptIndex === 0 ? '点击闭合多边形' : ''"
                 />
@@ -1365,14 +1375,19 @@ const fetchClasses = async () => {
     if (res.ok) {
       const data = await res.json();
       classes.value = data.classes || ['pig'];
+      // 校验并防止 activeClassIndex 越界
+      if (activeClassIndex.value >= classes.value.length || activeClassIndex.value < 0) {
+        activeClassIndex.value = 0;
+      }
     }
   } catch (err) {
     console.error('获取类别列表失败:', err);
   }
 };
 
-// 监听当前数据集变化，并重载相关列表
+// 监听当前数据集变化，重置分类选中并重载相关列表
 watch(currentDataset, async () => {
+  activeClassIndex.value = 0; // 切换数据集时默认选中第一个分类标签
   await fetchImageList();
   await fetchClasses();
   currentImage.value = null;
@@ -1440,6 +1455,9 @@ const selectImage = async (img) => {
     if (res.ok) {
       const data = await res.json();
       classes.value = data.classes || ['pig'];
+      if (activeClassIndex.value >= classes.value.length || activeClassIndex.value < 0) {
+        activeClassIndex.value = 0;
+      }
       polygons.value = data.polygons || [];
     }
   } catch (err) {
@@ -1836,9 +1854,15 @@ const autoDetect = async (modelPath = null) => {
     if (res.ok) {
       const data = await res.json();
       if (data.polygons) {
-        polygons.value = data.polygons;
+        // 统一使用右侧“分类标签管理”中当前选中的类别 activeClassIndex.value
+        const currentTargetClass = activeClassIndex.value;
+        polygons.value = data.polygons.map(poly => ({
+          ...poly,
+          class_id: currentTargetClass
+        }));
         activePolyIndex.value = null;
-        showToast(`自动识别成功！共检测到 ${data.polygons.length} 个实例。`, 'success');
+        const targetClassName = classes.value[currentTargetClass] || `类别#${currentTargetClass + 1}`;
+        showToast(`自动识别成功！共检测到 ${data.polygons.length} 个实例，已应用当前选中的【${targetClassName}】标签。`, 'success');
       }
     } else {
       const err = await res.json();
