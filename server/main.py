@@ -296,6 +296,12 @@ class SAMPredictRequest(BaseModel):
     points: List[List[float]] = Field(..., description="点击坐标 [[x1, y1], ...]")
     labels: List[int] = Field(..., description="点击类型 [1, 0, ...]")
 
+class PromptDetectRequest(BaseModel):
+    name: str = Field(..., description="图片文件名")
+    prompt: str = Field(..., description="提示词文本，如 'pig' 或 'pig, person'")
+    conf: float = Field(default=0.25, ge=0.01, le=1.0, description="置信度阈值")
+    class_id: int = Field(default=0, ge=0, description="默认分类索引 ID")
+
 class ClassesUpdateRequest(BaseModel):
     classes: List[str]
 
@@ -318,7 +324,39 @@ class LabelingPredictor:
     def __init__(self, workspace_dir: Path):
         self.workspace_dir = workspace_dir
         self.yolo_models = {}  # 缓存已加载的 YOLO 实例: path_str -> model
+        self.yolo_world_model = None
         self.sam_model = None
+
+    def get_yolo_world_model(self):
+        if self.yolo_world_model is None:
+            from ultralytics import YOLOWorld
+            # 候选模型名称按推荐顺序查找 (m > s > l > x)
+            candidate_names = [
+                "yolov8m-worldv2.pt",
+                "yolov8s-worldv2.pt",
+                "yolov8l-worldv2.pt",
+                "yolov8x-worldv2.pt",
+                "yolov8m-world.pt",
+                "yolov8s-world.pt",
+                "yolov8l-world.pt",
+                "yolov8x-world.pt"
+            ]
+            found_path = None
+            models_dir = self.workspace_dir / "models"
+            for name in candidate_names:
+                p = models_dir / name
+                if p.exists():
+                    found_path = p
+                    break
+            
+            if found_path:
+                print(f"[YOLOWorld] 正在加载本地已下载权重: {found_path.name}")
+                self.yolo_world_model = YOLOWorld(str(found_path))
+            else:
+                # 若无本地权重，退回默认名称
+                print("[YOLOWorld] 未在 models/ 目录下找到本地 YOLO-World 权重，将尝试网络在线加载/下载 yolov8m-worldv2.pt...")
+                self.yolo_world_model = YOLOWorld("yolov8m-worldv2.pt")
+        return self.yolo_world_model
 
     def get_yolo_model(self, custom_path: str = None):
         # 1. 如果传入了特定模型路径
@@ -817,6 +855,106 @@ def sam_predict_polygons(req: SAMPredictRequest, dataset: str = "default"):
         return {"polygons": polygons}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SAM 识别失败: {str(e)}")
+
+# 8.1 基于 Prompt 开放词汇自动识别 (YOLO-World + SAM 多边形提取)
+@app.post("/api/labeling/prompt_detect")
+def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
+    image_path = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images" / req.name
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="图片不存在")
+        
+    prompt_str = req.prompt.strip()
+    if not prompt_str:
+        raise HTTPException(status_code=400, detail="提示词不能为空")
+        
+    prompts = [p.strip() for p in prompt_str.replace("，", ",").split(",") if p.strip()]
+    if not prompts:
+        raise HTTPException(status_code=400, detail="有效提示词不能为空")
+        
+    try:
+        import torch
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+        # 1. 使用 YOLO-World 进行开放词汇检测
+        yolo_world = predictor.get_yolo_world_model()
+        
+        # 防御 PyTorch 在多轮更换 Prompt 时发生的 Device Mismatch 错误
+        try:
+            yolo_world.set_classes(prompts)
+            if hasattr(yolo_world, 'model') and yolo_world.model is not None:
+                yolo_world.model.to(device)
+            results = yolo_world(str(image_path), conf=req.conf, device=device)
+        except Exception as device_err:
+            if "same device" in str(device_err) or "cuda" in str(device_err).lower():
+                print(f"[PromptDetect] 自动恢复模型设备上下文: {device_err}")
+                predictor.yolo_world_model = None
+                yolo_world = predictor.get_yolo_world_model()
+                yolo_world.set_classes(prompts)
+                if hasattr(yolo_world, 'model') and yolo_world.model is not None:
+                    yolo_world.model.to(device)
+                results = yolo_world(str(image_path), conf=req.conf, device=device)
+            else:
+                raise device_err
+        
+        if len(results) == 0 or len(results[0].boxes) == 0:
+            print(f"[PromptDetect] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf} -> 未检测到任何匹配目标 (boxes count: 0)")
+            return {"polygons": []}
+            
+        r = results[0]
+        boxes_xyxy = r.boxes.xyxy.cpu().numpy() # [N, 4] 绝对像素坐标
+        cls_ids = r.boxes.cls.cpu().numpy().astype(int) # [N] 对应 prompts 索引
+        conf_scores = r.boxes.conf.cpu().numpy() # [N] 置信度得分
+        
+        max_conf = float(conf_scores.max()) if len(conf_scores) > 0 else 0.0
+        print(f"[PromptDetect] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf} -> 检测到 {len(boxes_xyxy)} 个目标, 最高置信度: {max_conf:.4f}")
+        
+        img_h, img_w = r.orig_shape
+        
+        polygons = []
+        
+        # 2. 尝试使用 SAM 获取精细的多边形 Mask
+        sam_available = False
+        try:
+            sam = predictor.get_sam_model()
+            # 将检测到的 Boxes 传给 SAM 预测 Segmentation Mask
+            sam_results = sam(str(image_path), bboxes=boxes_xyxy.tolist())
+            if len(sam_results) > 0 and sam_results[0].masks is not None:
+                sam_masks = sam_results[0].masks.xyn
+                for i, segment in enumerate(sam_masks):
+                    if len(segment) >= 3:
+                        pts = simplify_polygon(segment.tolist())
+                        polygons.append({
+                            "class_id": req.class_id,
+                            "points": pts,
+                            "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
+                        })
+                sam_available = True
+        except Exception as sam_err:
+            print(f"[PromptDetect] SAM 提拉 Mask 失败或模型未找到，改用矩形边界框: {sam_err}")
+            sam_available = False
+            
+        # 3. 若无 SAM，使用 4 点归一化矩形框作为 Segmentation 多边形
+        if not sam_available:
+            for i, box in enumerate(boxes_xyxy):
+                x1, y1, x2, y2 = box
+                norm_box = [
+                    [round(float(x1 / img_w), 6), round(float(y1 / img_h), 6)],
+                    [round(float(x2 / img_w), 6), round(float(y1 / img_h), 6)],
+                    [round(float(x2 / img_w), 6), round(float(y2 / img_h), 6)],
+                    [round(float(x1 / img_w), 6), round(float(y2 / img_h), 6)]
+                ]
+                polygons.append({
+                    "class_id": req.class_id,
+                    "points": norm_box,
+                    "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
+                })
+                
+        return {"polygons": polygons}
+    except Exception as e:
+        err_msg = str(e)
+        if "No module named 'clip'" in err_msg or "clip" in err_msg.lower():
+            raise HTTPException(status_code=500, detail="缺少开放词汇文本编码依赖 'openai-clip'。请在服务器终端运行：pip install openai-clip")
+        raise HTTPException(status_code=500, detail=f"Prompt 开放词汇识别失败: {err_msg}")
 
 @app.get("/api/logs")
 async def get_logs_stream(request: Request):
