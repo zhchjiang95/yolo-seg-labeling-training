@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
+import time
+import gc
 import asyncio
 import psutil
 import cv2
@@ -320,14 +322,28 @@ def simplify_polygon(points_list: List[List[float]], tolerance: float = 0.003) -
         return simplified
     return points_list
 
+# 模型空闲自动卸载超时时间（秒），默认 5 分钟无使用则从内存中释放
+MODEL_IDLE_TIMEOUT = int(os.environ.get("MODEL_IDLE_TIMEOUT", 300))
+
 class LabelingPredictor:
     def __init__(self, workspace_dir: Path):
         self.workspace_dir = workspace_dir
         self.yolo_models = {}  # 缓存已加载的 YOLO 实例: path_str -> model
         self.yolo_world_model = None
         self.sam_model = None
+        # 各模型类型的最后使用时间戳
+        self._last_used = {
+            "yolo": 0.0,       # YOLO-seg 自动检测
+            "yolo_world": 0.0, # YOLO-World Prompt 识别
+            "sam": 0.0,        # SAM 辅助标注
+        }
+
+    def _touch(self, model_type: str):
+        """更新指定模型类型的最后使用时间"""
+        self._last_used[model_type] = time.time()
 
     def get_yolo_world_model(self):
+        self._touch("yolo_world")
         if self.yolo_world_model is None:
             from ultralytics import YOLOWorld
             # 候选模型名称按推荐顺序查找 (m > s > l > x)
@@ -359,6 +375,7 @@ class LabelingPredictor:
         return self.yolo_world_model
 
     def get_yolo_model(self, custom_path: str = None):
+        self._touch("yolo")
         # 1. 如果传入了特定模型路径
         if custom_path:
             path_obj = Path(custom_path)
@@ -397,6 +414,7 @@ class LabelingPredictor:
         return self.yolo_models[default_path_str]
 
     def get_sam_model(self):
+        self._touch("sam")
         if self.sam_model is None:
             sam_names = [
                 "sam3.1_multiplex.pt", 
@@ -420,7 +438,128 @@ class LabelingPredictor:
             self.sam_model = SAM(str(found_path))
         return self.sam_model
 
+    def unload_idle_models(self, timeout: int = None):
+        """
+        卸载超过空闲超时时间的模型，释放 CPU/GPU 内存。
+        timeout 为 None 时使用全局 MODEL_IDLE_TIMEOUT（默认 300 秒）。
+        timeout 为 0 时强制卸载所有模型。
+        返回被卸载的模型名称列表。
+        """
+        if timeout is None:
+            timeout = MODEL_IDLE_TIMEOUT
+
+        now = time.time()
+        unloaded = []
+
+        # 卸载 YOLO-World
+        if self.yolo_world_model is not None:
+            idle_sec = now - self._last_used.get("yolo_world", 0)
+            if timeout == 0 or idle_sec > timeout:
+                del self.yolo_world_model
+                self.yolo_world_model = None
+                unloaded.append(f"YOLO-World (空闲 {int(idle_sec)}s)")
+
+        # 卸载 SAM
+        if self.sam_model is not None:
+            idle_sec = now - self._last_used.get("sam", 0)
+            if timeout == 0 or idle_sec > timeout:
+                del self.sam_model
+                self.sam_model = None
+                unloaded.append(f"SAM (空闲 {int(idle_sec)}s)")
+
+        # 卸载 YOLO-seg 缓存模型
+        if self.yolo_models:
+            idle_sec = now - self._last_used.get("yolo", 0)
+            if timeout == 0 or idle_sec > timeout:
+                model_count = len(self.yolo_models)
+                self.yolo_models.clear()
+                unloaded.append(f"YOLO-seg ×{model_count} (空闲 {int(idle_sec)}s)")
+
+        # 强制 Python GC 回收 + 释放 GPU 缓存
+        if unloaded:
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+            print(f"[ModelManager] 已卸载空闲模型: {', '.join(unloaded)}")
+
+        return unloaded
+
+    def get_loaded_info(self) -> Dict[str, Any]:
+        """获取当前已加载模型的状态信息"""
+        now = time.time()
+        info = {}
+        if self.yolo_world_model is not None:
+            info["yolo_world"] = {
+                "loaded": True,
+                "idle_seconds": int(now - self._last_used.get("yolo_world", now)),
+            }
+        if self.sam_model is not None:
+            info["sam"] = {
+                "loaded": True,
+                "idle_seconds": int(now - self._last_used.get("sam", now)),
+            }
+        if self.yolo_models:
+            info["yolo_seg"] = {
+                "loaded": True,
+                "count": len(self.yolo_models),
+                "idle_seconds": int(now - self._last_used.get("yolo", now)),
+            }
+        return info
+
 predictor = LabelingPredictor(WORKSPACE_DIR)
+
+# 后台定时任务：每 60 秒检查一次，卸载超过空闲超时的模型
+_model_cleanup_task = None
+
+async def _model_cleanup_loop():
+    """后台协程：周期性检查并卸载空闲模型"""
+    while True:
+        await asyncio.sleep(60)  # 每 60 秒扫描一次
+        try:
+            predictor.unload_idle_models()
+        except Exception as e:
+            print(f"[ModelManager] 后台清理异常: {e}")
+
+@app.on_event("startup")
+async def _start_model_cleanup():
+    global _model_cleanup_task
+    _model_cleanup_task = asyncio.create_task(_model_cleanup_loop())
+    print(f"[ModelManager] 后台模型空闲清理任务已启动 (空闲超时: {MODEL_IDLE_TIMEOUT}s)")
+
+@app.on_event("shutdown")
+async def _stop_model_cleanup():
+    global _model_cleanup_task
+    if _model_cleanup_task:
+        _model_cleanup_task.cancel()
+        try:
+            await _model_cleanup_task
+        except asyncio.CancelledError:
+            pass
+    # 关闭时强制释放所有模型
+    predictor.unload_idle_models(timeout=0)
+    print("[ModelManager] 所有模型已卸载，后台清理任务已停止")
+
+@app.post("/api/labeling/unload_models")
+def unload_models():
+    """手动释放所有已加载的推理模型，立即回收内存"""
+    unloaded = predictor.unload_idle_models(timeout=0)
+    if unloaded:
+        return {"status": "success", "message": f"已释放模型: {', '.join(unloaded)}"}
+    return {"status": "success", "message": "当前没有已加载的模型"}
+
+@app.get("/api/labeling/model_status")
+def get_model_status():
+    """查询当前已加载模型的状态和空闲时间"""
+    info = predictor.get_loaded_info()
+    return {
+        "idle_timeout": MODEL_IDLE_TIMEOUT,
+        "models": info,
+        "any_loaded": len(info) > 0,
+    }
 
 # 1. 获取图片列表
 @app.get("/api/labeling/images")
@@ -762,28 +901,42 @@ def auto_detect_polygons(req: Dict[str, str], dataset: str = "default"):
     image_path = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images" / name
     if not image_path.exists():
         raise HTTPException(status_code=404, detail="图片不存在")
-        
+    
+    results = None
     try:
-        model = predictor.get_yolo_model(model_path)
-        results = model(str(image_path), conf=0.25)
-        
-        polygons = []
-        if len(results) > 0:
-            r = results[0]
-            if r.masks is not None:
-                xyn = r.masks.xyn
-                cls_list = r.boxes.cls.tolist()
-                for i, segment in enumerate(xyn):
-                    if len(segment) >= 3:
-                        pts = segment.tolist()
-                        pts = simplify_polygon(pts)
-                        polygons.append({
-                            "class_id": int(cls_list[i]),
-                            "points": pts
-                        })
+        import torch
+        with torch.no_grad():
+            model = predictor.get_yolo_model(model_path)
+            results = model(str(image_path), conf=0.25)
+            
+            polygons = []
+            if len(results) > 0:
+                r = results[0]
+                if r.masks is not None:
+                    xyn = r.masks.xyn
+                    cls_list = r.boxes.cls.tolist()
+                    for i, segment in enumerate(xyn):
+                        if len(segment) >= 3:
+                            pts = segment.tolist()
+                            pts = simplify_polygon(pts)
+                            polygons.append({
+                                "class_id": int(cls_list[i]),
+                                "points": pts
+                            })
         return {"polygons": polygons}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"自动检测失败: {str(e)}")
+    finally:
+        if results is not None:
+            del results
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 # 7.1 获取可用的分割模型列表
 @app.get("/api/labeling/models")
@@ -840,21 +993,35 @@ def sam_predict_polygons(req: SAMPredictRequest, dataset: str = "default"):
         
     if not req.points:
         return {"polygons": []}
-        
+    
+    results = None
     try:
-        sam = predictor.get_sam_model()
-        results = sam(str(image_path), points=[req.points], labels=[req.labels])
-        
-        polygons = []
-        if len(results) > 0 and results[0].masks is not None:
-            for segment in results[0].masks.xyn:
-                if len(segment) >= 3:
-                    pts = segment.tolist()
-                    pts = simplify_polygon(pts)
-                    polygons.append(pts)
+        import torch
+        with torch.no_grad():
+            sam = predictor.get_sam_model()
+            results = sam(str(image_path), points=[req.points], labels=[req.labels])
+            
+            polygons = []
+            if len(results) > 0 and results[0].masks is not None:
+                for segment in results[0].masks.xyn:
+                    if len(segment) >= 3:
+                        pts = segment.tolist()
+                        pts = simplify_polygon(pts)
+                        polygons.append(pts)
         return {"polygons": polygons}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SAM 识别失败: {str(e)}")
+    finally:
+        if results is not None:
+            del results
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 # 8.1 基于 Prompt 开放词汇自动识别 (YOLO-World + SAM 多边形提取)
 @app.post("/api/labeling/prompt_detect")
@@ -870,91 +1037,129 @@ def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
     prompts = [p.strip() for p in prompt_str.replace("，", ",").split(",") if p.strip()]
     if not prompts:
         raise HTTPException(status_code=400, detail="有效提示词不能为空")
+    
+    # 用于 finally 块中安全释放的局部变量
+    results = None
+    sam_results = None
         
     try:
         import torch
+        import gc
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-        # 1. 使用 YOLO-World 进行开放词汇检测
-        yolo_world = predictor.get_yolo_world_model()
-        
-        # 防御 PyTorch 在多轮更换 Prompt 时发生的 Device Mismatch 错误
-        try:
-            yolo_world.set_classes(prompts)
-            if hasattr(yolo_world, 'model') and yolo_world.model is not None:
-                yolo_world.model.to(device)
-            results = yolo_world(str(image_path), conf=req.conf, device=device)
-        except Exception as device_err:
-            if "same device" in str(device_err) or "cuda" in str(device_err).lower():
-                print(f"[PromptDetect] 自动恢复模型设备上下文: {device_err}")
-                predictor.yolo_world_model = None
-                yolo_world = predictor.get_yolo_world_model()
+        # 禁用梯度计算，防止推理过程中构建计算图导致 tensor 累积泄漏
+        with torch.no_grad():
+            # 1. 使用 YOLO-World 进行开放词汇检测
+            yolo_world = predictor.get_yolo_world_model()
+            
+            # 防御 PyTorch 在多轮更换 Prompt 时发生的 Device Mismatch 错误
+            try:
                 yolo_world.set_classes(prompts)
                 if hasattr(yolo_world, 'model') and yolo_world.model is not None:
                     yolo_world.model.to(device)
                 results = yolo_world(str(image_path), conf=req.conf, device=device)
-            else:
-                raise device_err
-        
-        if len(results) == 0 or len(results[0].boxes) == 0:
-            print(f"[PromptDetect] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf} -> 未检测到任何匹配目标 (boxes count: 0)")
-            return {"polygons": []}
+            except Exception as device_err:
+                if "same device" in str(device_err) or "cuda" in str(device_err).lower():
+                    print(f"[PromptDetect] 自动恢复模型设备上下文: {device_err}")
+                    # 先释放局部引用，确保旧模型可被 GC 回收
+                    del yolo_world
+                    predictor.yolo_world_model = None
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    yolo_world = predictor.get_yolo_world_model()
+                    yolo_world.set_classes(prompts)
+                    if hasattr(yolo_world, 'model') and yolo_world.model is not None:
+                        yolo_world.model.to(device)
+                    results = yolo_world(str(image_path), conf=req.conf, device=device)
+                else:
+                    raise device_err
             
-        r = results[0]
-        boxes_xyxy = r.boxes.xyxy.cpu().numpy() # [N, 4] 绝对像素坐标
-        cls_ids = r.boxes.cls.cpu().numpy().astype(int) # [N] 对应 prompts 索引
-        conf_scores = r.boxes.conf.cpu().numpy() # [N] 置信度得分
-        
-        max_conf = float(conf_scores.max()) if len(conf_scores) > 0 else 0.0
-        print(f"[PromptDetect] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf} -> 检测到 {len(boxes_xyxy)} 个目标, 最高置信度: {max_conf:.4f}")
-        
-        img_h, img_w = r.orig_shape
-        
-        polygons = []
-        
-        # 2. 尝试使用 SAM 获取精细的多边形 Mask
-        sam_available = False
-        try:
-            sam = predictor.get_sam_model()
-            # 将检测到的 Boxes 传给 SAM 预测 Segmentation Mask
-            sam_results = sam(str(image_path), bboxes=boxes_xyxy.tolist())
-            if len(sam_results) > 0 and sam_results[0].masks is not None:
-                sam_masks = sam_results[0].masks.xyn
-                for i, segment in enumerate(sam_masks):
-                    if len(segment) >= 3:
-                        pts = simplify_polygon(segment.tolist())
-                        polygons.append({
-                            "class_id": req.class_id,
-                            "points": pts,
-                            "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
-                        })
-                sam_available = True
-        except Exception as sam_err:
-            print(f"[PromptDetect] SAM 提拉 Mask 失败或模型未找到，改用矩形边界框: {sam_err}")
-            sam_available = False
-            
-        # 3. 若无 SAM，使用 4 点归一化矩形框作为 Segmentation 多边形
-        if not sam_available:
-            for i, box in enumerate(boxes_xyxy):
-                x1, y1, x2, y2 = box
-                norm_box = [
-                    [round(float(x1 / img_w), 6), round(float(y1 / img_h), 6)],
-                    [round(float(x2 / img_w), 6), round(float(y1 / img_h), 6)],
-                    [round(float(x2 / img_w), 6), round(float(y2 / img_h), 6)],
-                    [round(float(x1 / img_w), 6), round(float(y2 / img_h), 6)]
-                ]
-                polygons.append({
-                    "class_id": req.class_id,
-                    "points": norm_box,
-                    "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
-                })
+            if len(results) == 0 or len(results[0].boxes) == 0:
+                print(f"[PromptDetect] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf} -> 未检测到任何匹配目标 (boxes count: 0)")
+                return {"polygons": []}
                 
+            r = results[0]
+            # 立即提取所需数据到 CPU numpy，之后可安全释放 GPU tensor
+            boxes_xyxy = r.boxes.xyxy.cpu().numpy() # [N, 4] 绝对像素坐标
+            cls_ids = r.boxes.cls.cpu().numpy().astype(int) # [N] 对应 prompts 索引
+            conf_scores = r.boxes.conf.cpu().numpy() # [N] 置信度得分
+            img_h, img_w = r.orig_shape
+            
+            # 数据已提取完毕，立即释放 YOLO-World 推理结果以回收显存和内存
+            del r, results
+            results = None
+            
+            max_conf = float(conf_scores.max()) if len(conf_scores) > 0 else 0.0
+            print(f"[PromptDetect] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf} -> 检测到 {len(boxes_xyxy)} 个目标, 最高置信度: {max_conf:.4f}")
+            
+            polygons = []
+            
+            # 2. 尝试使用 SAM 获取精细的多边形 Mask
+            sam_available = False
+            try:
+                sam = predictor.get_sam_model()
+                # 将检测到的 Boxes 传给 SAM 预测 Segmentation Mask
+                sam_results = sam(str(image_path), bboxes=boxes_xyxy.tolist())
+                if len(sam_results) > 0 and sam_results[0].masks is not None:
+                    sam_masks = sam_results[0].masks.xyn
+                    for i, segment in enumerate(sam_masks):
+                        if len(segment) >= 3:
+                            pts = simplify_polygon(segment.tolist())
+                            polygons.append({
+                                "class_id": req.class_id,
+                                "points": pts,
+                                "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
+                            })
+                    sam_available = True
+            except Exception as sam_err:
+                print(f"[PromptDetect] SAM 提拉 Mask 失败或模型未找到，改用矩形边界框: {sam_err}")
+                sam_available = False
+            finally:
+                # 及时释放 SAM 推理结果
+                if sam_results is not None:
+                    del sam_results
+                    sam_results = None
+                
+            # 3. 若无 SAM，使用 4 点归一化矩形框作为 Segmentation 多边形
+            if not sam_available:
+                for i, box in enumerate(boxes_xyxy):
+                    x1, y1, x2, y2 = box
+                    norm_box = [
+                        [round(float(x1 / img_w), 6), round(float(y1 / img_h), 6)],
+                        [round(float(x2 / img_w), 6), round(float(y1 / img_h), 6)],
+                        [round(float(x2 / img_w), 6), round(float(y2 / img_h), 6)],
+                        [round(float(x1 / img_w), 6), round(float(y2 / img_h), 6)]
+                    ]
+                    polygons.append({
+                        "class_id": req.class_id,
+                        "points": norm_box,
+                        "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
+                    })
+                    
         return {"polygons": polygons}
     except Exception as e:
         err_msg = str(e)
         if "No module named 'clip'" in err_msg or "clip" in err_msg.lower():
             raise HTTPException(status_code=500, detail="缺少开放词汇文本编码依赖 'openai-clip'。请在服务器终端运行：pip install openai-clip")
         raise HTTPException(status_code=500, detail=f"Prompt 开放词汇识别失败: {err_msg}")
+    finally:
+        # 确保所有推理结果被释放，并强制触发 GC 回收
+        try:
+            if results is not None:
+                del results
+            if sam_results is not None:
+                del sam_results
+        except Exception:
+            pass
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 @app.get("/api/logs")
 async def get_logs_stream(request: Request):
