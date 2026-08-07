@@ -1107,7 +1107,7 @@ select:focus {
   flex-direction: column;
   height: 100%;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   padding: 16px !important;
 }
 
@@ -1766,6 +1766,203 @@ select:focus {
 .results-chart-img:hover {
   transform: scale(1.02);
   cursor: zoom-in;
+}
+
+/* ==========================================
+   Prompt 悬浮弹窗样式 (Popover)
+   ========================================== */
+.prompt-popover-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 270px;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25), var(--inner-glow);
+  padding: 12px 14px;
+  z-index: 1000;
+  pointer-events: auto;
+}
+
+.dark-theme .prompt-popover-panel {
+  background: rgba(15, 15, 28, 0.94);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.prompt-popover-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.popover-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.popover-close-btn:hover {
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.prompt-popover-input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.prompt-popover-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+.prompt-popover-conf-input {
+  width: 68px;
+  padding: 4px 6px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  text-align: center;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.prompt-popover-conf-input:focus {
+  border-color: var(--primary);
+}
+
+.prompt-popover-submit-btn {
+  width: 100%;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--primary-gradient);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px var(--primary-glow);
+  transition: all 0.2s;
+}
+
+.prompt-popover-submit-btn:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.prompt-popover-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.popover-arrow {
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 10px;
+  height: 10px;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border-color);
+  border-top: 1px solid var(--border-color);
+}
+
+.dark-theme .popover-arrow {
+  background: rgba(15, 15, 28, 0.94);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+/* ==========================================
+   SAM 辅助悬浮面板 (Popover)
+   ========================================== */
+.sam-popover-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 210px;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25), var(--inner-glow);
+  padding: 10px 12px;
+  z-index: 1000;
+  pointer-events: auto;
+}
+
+.dark-theme .sam-popover-panel {
+  background: rgba(15, 15, 28, 0.94);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.sam-confirm-btn {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #10b981, #059669);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  transition: all 0.2s;
+}
+
+.sam-confirm-btn:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.sam-confirm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.popover-fade-enter-active,
+.popover-fade-leave-active {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.popover-fade-enter-from,
+.popover-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-8px) scale(0.95);
 }
 
 

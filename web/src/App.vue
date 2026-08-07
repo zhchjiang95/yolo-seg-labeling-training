@@ -556,27 +556,64 @@
               </svg>
               手动标注
             </button>
-            <button class="tool-btn" :class="{ active: activeTool === 'sam' }" @click="setTool('sam')" title="SAM辅助：左键正点(目标)，右键负点(排除)，Enter确认">
-              <span v-if="isSamPredicting" class="spinner" style="margin-right: 4px;"></span>
-              <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-              </svg>
-              SAM辅助
-            </button>
-            <button
-              v-if="activeTool === 'sam'"
-              class="tool-btn"
-              :disabled="!samPreviewPolygon || isSamPredicting"
-              style="background: var(--success); color: #fff; border-color: var(--success);"
-              @click="confirmSAM"
-              title="确认当前 SAM 多边形并保存到实例列表中 (快捷键 Enter)"
-            >
-              <span v-if="isSamPredicting" class="spinner" style="margin-right: 4px;"></span>
-              <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-              保持
-            </button>
+            <!-- SAM 辅助智能标注 (包含向下悬浮保持与控制面板) -->
+            <div class="sam-popover-wrapper" style="position: relative; display: inline-block;">
+              <button 
+                class="tool-btn" 
+                :class="{ active: activeTool === 'sam' }" 
+                @click="setTool('sam')" 
+                title="SAM辅助：左键正点(目标)，右键负点(排除)，Enter确认"
+              >
+                <span v-if="isSamPredicting" class="spinner" style="margin-right: 4px;"></span>
+                <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+                SAM辅助
+              </button>
+
+              <!-- 处于 SAM 模式时在按钮下方悬浮显示的保持控制面板 -->
+              <transition name="popover-fade">
+                <div v-if="activeTool === 'sam'" class="sam-popover-panel" @click.stop>
+                  <div class="popover-arrow"></div>
+                  
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 11px;">
+                    <span style="font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 4px;">
+                      🔮 SAM 辅助面板
+                    </span>
+                    <span v-if="samPrompts.length > 0" class="status-badge-inline labeled">
+                      {{ samPrompts.filter(p => p.label === 1).length }}正 / {{ samPrompts.filter(p => p.label === 0).length }}负
+                    </span>
+                  </div>
+
+                  <!-- 核心操作按钮组 -->
+                  <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <button
+                      class="sam-confirm-btn"
+                      :disabled="!samPreviewPolygon || isSamPredicting"
+                      @click="confirmSAM"
+                      title="确认当前 SAM 多边形并保存到实例列表中 (快捷键 Enter)"
+                    >
+                      <span v-if="isSamPredicting" class="spinner" style="margin-right: 6px;"></span>
+                      <svg v-else style="width: 14px; height: 14px; margin-right: 4px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                      {{ isSamPredicting ? '推理中...' : '保持标注 (Enter)' }}
+                    </button>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10.5px; color: var(--text-muted); padding-top: 2px;">
+                      <span>Esc 撤销打点</span>
+                      <button 
+                        v-if="samPrompts.length > 0"
+                        @click="clearSAMPrompts"
+                        style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; text-decoration: underline; font-size: 10.5px;"
+                      >
+                        清空打点
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </transition>
+            </div>
 
 
             <!-- 一键模型识别悬停下拉列表 (高亮亮紫科技感按钮) -->
@@ -613,39 +650,69 @@
               </div>
             </div>
 
-            <!-- Prompt 开放词汇智能识别控件块 -->
-            <div class="prompt-detect-group" style="display: flex; align-items: center; gap: 4px; background: rgba(99, 102, 241, 0.08); padding: 2px 6px; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.25);">
-              <svg style="width: 14px; height: 14px; color: var(--primary); margin-left: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-              </svg>
-              <input 
-                type="text" 
-                v-model="promptText" 
-                placeholder="输入 Prompt (如 pig)..." 
-                style="width: 120px; padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main);"
-                @keyup.enter="promptDetect"
-                title="输入想要识别的文本提示词，支持多个词汇以逗号分割"
-              />
-              <span style="font-size: 11px; color: var(--text-muted); margin-left: 2px;">Conf:</span>
-              <input 
-                type="number" 
-                v-model.number="promptConf" 
-                step="0.05" 
-                min="0.01" 
-                max="0.9" 
-                style="width: 52px; padding: 4px 4px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); text-align: center;" 
-                title="置信度阈值 (Conf Threshold)。如识别不到请将置信度调低（例如 0.1）"
-              />
+            <!-- Prompt 开放词汇智能识别控件块 (按需点击展开悬浮 Popover) -->
+            <div class="prompt-popover-wrapper" style="position: relative; display: inline-block;">
               <button 
                 class="tool-btn" 
-                :disabled="!currentImage || isPromptDetecting" 
-                style="background: var(--primary-gradient); color: #fff; border: none; padding: 4px 10px; font-weight: 600;" 
-                @click="promptDetect"
-                title="开放词汇识别：直接根据提示词识别全图目标"
+                :class="{ active: showPromptPopover }"
+                :disabled="!currentImage" 
+                style="border-color: rgba(99, 102, 241, 0.4); color: var(--primary); background: rgba(99, 102, 241, 0.08); font-weight: 600;" 
+                @click.stop="togglePromptPopover"
+                title="点击展开 Prompt 开放词汇智能识别"
               >
-                <span v-if="isPromptDetecting" class="spinner" style="margin-right: 4px;"></span>
-                ✨ Prompt 识别
+                <svg style="width: 14px; height: 14px; color: var(--primary); margin-right: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>✨ Prompt 识别</span>
               </button>
+
+              <!-- 悬浮在按钮上方的 Popover 弹窗 -->
+              <transition name="popover-fade">
+                <div v-if="showPromptPopover" class="prompt-popover-panel" @click.stop>
+                  <div class="prompt-popover-header">
+                    <span style="font-weight: 600; font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 4px;">
+                      ✨ Prompt 开放词汇识别
+                    </span>
+                    <button class="popover-close-btn" @click="showPromptPopover = false" title="关闭">×</button>
+                  </div>
+
+                  <div class="prompt-popover-body">
+                    <div style="margin-bottom: 8px;">
+                      <label style="font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; display: block;">提示词 (支持逗号分隔多个词汇)：</label>
+                      <input 
+                        type="text" 
+                        v-model="promptText" 
+                        placeholder="如 pig, person..." 
+                        class="prompt-popover-input"
+                        @keyup.enter="promptDetect"
+                      />
+                    </div>
+
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px;">
+                      <label style="font-size: 11px; color: var(--text-secondary); white-space: nowrap;">置信度阈值 (Conf):</label>
+                      <input 
+                        type="number" 
+                        v-model.number="promptConf" 
+                        step="0.05" 
+                        min="0.01" 
+                        max="0.9" 
+                        class="prompt-popover-conf-input"
+                        title="置信度阈值。如未识别到可尝试调低（如 0.01）"
+                      />
+                    </div>
+
+                    <button 
+                      class="prompt-popover-submit-btn" 
+                      :disabled="!currentImage || isPromptDetecting || !promptText.trim()" 
+                      @click="promptDetect"
+                    >
+                      <span v-if="isPromptDetecting" class="spinner" style="margin-right: 6px;"></span>
+                      {{ isPromptDetecting ? '正在识别全图目标...' : '开始识别' }}
+                    </button>
+                  </div>
+                  <div class="popover-arrow"></div>
+                </div>
+              </transition>
             </div>
             <button class="tool-btn" :class="{ active: activeTool === 'pan' }" @click="setTool('pan')" title="手形：左键拖拽平移图片">
               <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1315,6 +1382,20 @@ const isSamPredicting = ref(false);
 const promptText = ref('pig');
 const promptConf = ref(0.01); // 默认 0.01 置信度，最大化捕获全图目标
 const isPromptDetecting = ref(false);
+const showPromptPopover = ref(false);
+
+const togglePromptPopover = () => {
+  showPromptPopover.value = !showPromptPopover.value;
+};
+
+const closePromptPopoverOnOutside = (e) => {
+  if (showPromptPopover.value) {
+    const el = document.querySelector('.prompt-popover-wrapper');
+    if (el && !el.contains(e.target)) {
+      showPromptPopover.value = false;
+    }
+  }
+};
 
 // 多边形填充不透明度 (0.1 ~ 0.8，默认 0.35)
 const polyFillOpacity = ref(0.35);
@@ -2046,6 +2127,11 @@ const triggerSAMPredict = async () => {
   }
 };
 
+const clearSAMPrompts = () => {
+  samPrompts.value = [];
+  samPreviewPolygon.value = null;
+};
+
 const confirmSAM = () => {
   if (!samPreviewPolygon.value) return;
   polygons.value.push({
@@ -2429,6 +2515,7 @@ onMounted(async () => {
   fetchSysInfo();
   fetchTrainStatus();
   
+  window.addEventListener('click', closePromptPopoverOnOutside);
   if (currentTab.value === 'label') {
     fetchImageList();
     fetchModelsList();
@@ -2444,6 +2531,7 @@ onUnmounted(() => {
   clearInterval(sysInfoInterval);
   closeLogStream();
   
+  window.removeEventListener('click', closePromptPopoverOnOutside);
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
   window.removeEventListener('mousemove', handleMouseMoveGlobal);
