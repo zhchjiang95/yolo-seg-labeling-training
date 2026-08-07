@@ -819,7 +819,7 @@ select:focus {
   display: grid;
   grid-template-columns: 280px 1fr 300px;
   gap: 20px;
-  height: calc(100vh - 120px);
+  height: calc(100vh - 162px);
   min-height: 600px;
   align-items: stretch;
 }
@@ -974,6 +974,67 @@ select:focus {
 .file-delete-btn:hover {
   background: rgba(239, 68, 68, 0.1);
 }
+
+/* 实例删除二次确认 Tooltip 气泡提示 */
+.delete-confirm-tooltip {
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 8px;
+  background: var(--error);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+}
+
+.delete-confirm-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -4px;
+  transform: translateY(-50%);
+  border-width: 4px 0 4px 4px;
+  border-style: solid;
+  border-color: transparent transparent transparent var(--error);
+}
+
+.file-delete-btn.pending-delete {
+  background: var(--error-glow) !important;
+  color: var(--error) !important;
+  border: 1px solid var(--error) !important;
+  animation: pulseDeleteBtn 0.8s infinite alternate ease-in-out;
+}
+
+@keyframes pulseDeleteBtn {
+  0% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.15);
+  }
+}
+
+.delete-tooltip-fade-enter-active,
+.delete-tooltip-fade-leave-active {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.delete-tooltip-fade-enter-from,
+.delete-tooltip-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-50%) translateX(4px);
+}
+
 
 /* 图集列表过滤 Tab 及内联 Badge 样式 */
 .filter-tab-bar {

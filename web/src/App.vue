@@ -40,7 +40,7 @@
           </svg>
           YOLO26s-seg 智能分割训练平台
         </h1>
-        <div class="subtitle">面向猪只多边形分割任务的轻量化一站式训练控制台</div>
+        <div class="subtitle">面向目标多边形分割任务的轻量化一站式训练控制台</div>
       </div>
       
       <!-- 头部右侧动作组：状态徽章、Tab 与 主题 -->
@@ -194,7 +194,7 @@
               <label>
                 MixUp 混合比例 ({{ form.mixup.toFixed(1) }})
                 <span class="info-tooltip">?
-                  <span class="tooltip-box">将两张图像按随机权重融合成一张新图像。能大幅提升抗噪能力，但对单分类猪只分割推荐保持为0。</span>
+                  <span class="tooltip-box">将两张图像按随机权重融合成一张新图像。能大幅提升抗噪能力，但对单分类目标分割推荐保持为0。</span>
                 </span>
               </label>
               <div class="slider-container">
@@ -207,7 +207,7 @@
               <label>
                 CopyPaste 复制粘贴比例 ({{ form.copy_paste.toFixed(1) }})
                 <span class="info-tooltip">?
-                  <span class="tooltip-box">抠出图像中真实标注的猪只Polygon并随机粘贴到其他图像，能显著增加样本实例密度。</span>
+                  <span class="tooltip-box">抠出图像中真实标注的目标Polygon并随机粘贴到其他图像，能显著增加样本实例密度。</span>
                 </span>
               </label>
               <div class="slider-container">
@@ -221,7 +221,7 @@
                 <label>
                   水平翻转 (fliplr)
                   <span class="info-tooltip">?
-                    <span class="tooltip-box">以指定概率（如50%）将训练图片做左右镜像翻转，使模型适应对称角度的猪只。</span>
+                    <span class="tooltip-box">以指定概率（如50%）将训练图片做左右镜像翻转，使模型适应对称角度的目标。</span>
                   </span>
                 </label>
                 <div class="slider-container">
@@ -247,7 +247,7 @@
               <label>
                 随机旋转角度 (degrees: 0 - 180°)
                 <span class="info-tooltip">?
-                  <span class="tooltip-box">对图片进行指定旋转角度范围内的随机旋转。增强模型对各种偏斜、旋转猪只形态的适应力。</span>
+                  <span class="tooltip-box">对图片进行指定旋转角度范围内的随机旋转。增强模型对各种偏斜、旋转目标形态的适应力。</span>
                 </span>
               </label>
               <div class="slider-container">
@@ -711,8 +711,8 @@
         <!-- 标注操作提示语 -->
         <div v-if="currentImage" style="background: rgba(99,102,241,0.06); padding: 8px 12px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; border-left: 3px solid var(--primary);">
           <span v-if="activeTool === 'edit'">💡 <strong>编辑模式</strong>: 点击多边形选中，拖动顶点微调；拖动边线上的<strong>半透明中点</strong>可直接插入新顶点；双击顶点删除点；<strong>按住 Alt 键拖动鼠标可直接涂抹擦除顶点</strong>；Delete 键删除选中多边形。</span>
-          <span v-else-if="activeTool === 'draw'">✏️ <strong>手动打点</strong>: 鼠标左键在猪只边缘点击，绘制多边形轮廓。双击，或再次点击<strong>第一个点</strong>可闭合多边形完成创建。Esc 取消。</span>
-          <span v-else-if="activeTool === 'sam'">🔮 <strong>SAM智能辅助</strong>: 鼠标<strong>左键</strong>点击猪只区域生成绿点(指明前景)，<strong>右键</strong>点击背景生成红点(排除背景)。实时生成紫色预览虚线，满意后按 <strong>Enter 键</strong> 确认转化为多边形，Esc 撤销。</span>
+          <span v-else-if="activeTool === 'draw'">✏️ <strong>手动打点</strong>: 鼠标左键在目标边缘点击，绘制多边形轮廓。双击，或再次点击<strong>第一个点</strong>可闭合多边形完成创建。Esc 取消。</span>
+          <span v-else-if="activeTool === 'sam'">🔮 <strong>SAM智能辅助</strong>: 鼠标<strong>左键</strong>点击目标区域生成绿点(指明前景)，<strong>右键</strong>点击背景生成红点(排除背景)。实时生成紫色预览虚线，满意后按 <strong>Enter 键</strong> 确认转化为多边形，Esc 撤销。</span>
           <span v-else-if="activeTool === 'eraser'">🧽 <strong>橡皮擦模式</strong>: 按住鼠标左键并在要擦除的顶点区域内拖动涂抹，即可快速成批清除顶点。使用 <strong>[</strong> 和 <strong>]</strong> 键或滑块可调节擦除半径。</span>
           <span v-else-if="activeTool === 'pan'">🤚 <strong>手形拖拽</strong>: 按住鼠标左键并移动可以自由平移画布。在任何模式下，<strong>滚动鼠标滚轮</strong>均可缩放画布，<strong>按住空格键</strong>或使用<strong>鼠标右键拖动</strong>也可以随时平移。</span>
         </div>
@@ -950,12 +950,29 @@
                 </svg>
               </button>
 
-              <button class="file-delete-btn" style="opacity: 1;" @dblclick.stop="deletePolygon(idx)" title="双击删除此多边形">
-                <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
-                </svg>
-              </button>
+              <div style="position: relative; display: inline-flex; align-items: center;">
+                <transition name="delete-tooltip-fade">
+                  <div 
+                    v-if="pendingDeletePolyIndex === idx" 
+                    class="delete-confirm-tooltip"
+                    @click.stop="handleDeleteClick(idx)"
+                  >
+                    再次点击删除
+                  </div>
+                </transition>
+                <button 
+                  class="file-delete-btn" 
+                  :class="{ 'pending-delete': pendingDeletePolyIndex === idx }"
+                  style="opacity: 1;" 
+                  @click.stop="handleDeleteClick(idx)" 
+                  :title="pendingDeletePolyIndex === idx ? '再次点击确认删除' : '点击删除此多边形'"
+                >
+                  <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1266,6 +1283,8 @@ const classes = ref(['pig']);
 const activeClassIndex = ref(0);
 const polygons = ref([]);
 const activePolyIndex = ref(null);
+const pendingDeletePolyIndex = ref(null);
+let pendingDeleteTimer = null;
 const modelsList = ref([]); // 后端扫描出的 YOLO-seg 模型列表
 
 // 拖拽与缩水平移状态
@@ -1846,7 +1865,36 @@ const deletePoint = (polyIndex, ptIndex) => {
   }
 };
 
+const handleDeleteClick = (idx) => {
+  if (pendingDeletePolyIndex.value === idx) {
+    // 再次点击（无论是两次慢速点击还是快速连续双击） -> 执行删除
+    if (pendingDeleteTimer) {
+      clearTimeout(pendingDeleteTimer);
+      pendingDeleteTimer = null;
+    }
+    pendingDeletePolyIndex.value = null;
+    deletePolygon(idx);
+  } else {
+    // 首次点击 -> 显示提示 Tooltip，并设置 3 秒超时自动隐藏
+    if (pendingDeleteTimer) {
+      clearTimeout(pendingDeleteTimer);
+    }
+    pendingDeletePolyIndex.value = idx;
+    pendingDeleteTimer = setTimeout(() => {
+      pendingDeletePolyIndex.value = null;
+      pendingDeleteTimer = null;
+    }, 3000);
+  }
+};
+
 const deletePolygon = (idx) => {
+  if (pendingDeletePolyIndex.value === idx) {
+    pendingDeletePolyIndex.value = null;
+    if (pendingDeleteTimer) {
+      clearTimeout(pendingDeleteTimer);
+      pendingDeleteTimer = null;
+    }
+  }
   polygons.value.splice(idx, 1);
   if (activePolyIndex.value === idx) {
     activePolyIndex.value = null;
