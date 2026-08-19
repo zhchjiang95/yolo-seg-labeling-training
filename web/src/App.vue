@@ -930,6 +930,101 @@
                 :r="eraserRadius"
                 class="svg-eraser-pointer"
               />
+
+              <!-- 6. 多边形轮廓中心数字编号徽章 (与右侧分类标签管理/图像实例严格对应) -->
+              <g
+                v-for="(poly, polyIndex) in polygons"
+                v-show="!poly.hidden"
+                :key="'poly-badge-' + polyIndex"
+                class="svg-poly-badge"
+                :class="{ active: activePolyIndex === polyIndex }"
+                :transform="`translate(${getPolygonCenter(poly.points)[0]}, ${getPolygonCenter(poly.points)[1]})`"
+                @click.stop="selectPolygon(polyIndex)"
+                @mousedown.stop
+                :title="`#${polyIndex + 1} (${classes[poly.class_id] || '默认'}) - 点击选中`"
+              >
+                <!-- 胶囊状背景徽章 -->
+                <rect
+                  :x="-getBadgeDimensions('#' + (polyIndex + 1)).width / 2"
+                  :y="-getBadgeDimensions('#' + (polyIndex + 1)).height / 2"
+                  :width="getBadgeDimensions('#' + (polyIndex + 1)).width"
+                  :height="getBadgeDimensions('#' + (polyIndex + 1)).height"
+                  :rx="getBadgeDimensions('#' + (polyIndex + 1)).rx"
+                  class="poly-badge-bg"
+                  :style="{
+                    fill: getPolyColor(poly.class_id),
+                    stroke: activePolyIndex === polyIndex ? '#ffffff' : getPolyColor(poly.class_id),
+                    strokeWidth: `${getBadgeDimensions('#' + (polyIndex + 1)).strokeWidth}px`
+                  }"
+                />
+                <!-- 数字文本 -->
+                <text
+                  class="poly-badge-text"
+                  :style="{ fontSize: `${getBadgeDimensions('#' + (polyIndex + 1)).fontSize}px` }"
+                  text-anchor="middle"
+                  dominant-baseline="central"
+                >
+                  #{{ polyIndex + 1 }}
+                </text>
+              </g>
+
+              <!-- 7. 手动打点绘制中的临时多边形中心编号预览 -->
+              <g
+                v-if="activeTool === 'draw' && activePolygonPoints.length >= 3"
+                class="svg-poly-badge drawing"
+                :transform="`translate(${getPolygonCenter(activePolygonPoints)[0]}, ${getPolygonCenter(activePolygonPoints)[1]})`"
+              >
+                <rect
+                  :x="-getBadgeDimensions('#' + (polygons.length + 1)).width / 2"
+                  :y="-getBadgeDimensions('#' + (polygons.length + 1)).height / 2"
+                  :width="getBadgeDimensions('#' + (polygons.length + 1)).width"
+                  :height="getBadgeDimensions('#' + (polygons.length + 1)).height"
+                  :rx="getBadgeDimensions('#' + (polygons.length + 1)).rx"
+                  class="poly-badge-bg temp"
+                  :style="{
+                    fill: getPolyColor(activeClassIndex),
+                    stroke: '#ffffff',
+                    strokeWidth: `${getBadgeDimensions('#' + (polygons.length + 1)).strokeWidth}px`
+                  }"
+                />
+                <text
+                  class="poly-badge-text"
+                  :style="{ fontSize: `${getBadgeDimensions('#' + (polygons.length + 1)).fontSize}px` }"
+                  text-anchor="middle"
+                  dominant-baseline="central"
+                >
+                  #{{ polygons.length + 1 }}
+                </text>
+              </g>
+
+              <!-- 8. SAM 辅助模式下的预览多边形临时中心编号 -->
+              <g
+                v-if="activeTool === 'sam' && samPreviewPolygon && samPreviewPolygon.length >= 3"
+                class="svg-poly-badge sam-temp"
+                :transform="`translate(${getPolygonCenter(samPreviewPolygon)[0]}, ${getPolygonCenter(samPreviewPolygon)[1]})`"
+              >
+                <rect
+                  :x="-getBadgeDimensions('#' + (polygons.length + 1)).width / 2"
+                  :y="-getBadgeDimensions('#' + (polygons.length + 1)).height / 2"
+                  :width="getBadgeDimensions('#' + (polygons.length + 1)).width"
+                  :height="getBadgeDimensions('#' + (polygons.length + 1)).height"
+                  :rx="getBadgeDimensions('#' + (polygons.length + 1)).rx"
+                  class="poly-badge-bg sam-temp"
+                  :style="{
+                    fill: getPolyColor(activeClassIndex),
+                    stroke: '#ffffff',
+                    strokeWidth: `${getBadgeDimensions('#' + (polygons.length + 1)).strokeWidth}px`
+                  }"
+                />
+                <text
+                  class="poly-badge-text"
+                  :style="{ fontSize: `${getBadgeDimensions('#' + (polygons.length + 1)).fontSize}px` }"
+                  text-anchor="middle"
+                  dominant-baseline="central"
+                >
+                  #{{ polygons.length + 1 }}
+                </text>
+              </g>
             </svg>
           </div>
 
@@ -983,6 +1078,7 @@
           <div
             v-for="(poly, idx) in polygons"
             :key="'inst-' + idx"
+            :id="'inst-item-' + idx"
             class="instance-item"
             :class="{ active: activePolyIndex === idx }"
             @click="selectPolygon(idx)"
@@ -1825,10 +1921,96 @@ const finishDrawing = () => {
 // 5. 多边形编辑模式 (拖拽与中点插入)
 // ==========================================
 
-const selectPolygon = (idx) => {
-  if (activeTool.value === 'edit' || activeTool.value === 'eraser') {
-    activePolyIndex.value = idx;
+// 计算多边形几何中心坐标（返回绝对像素坐标 [pixelX, pixelY]）
+const getPolygonCenter = (points) => {
+  if (!points || points.length === 0) return [0, 0];
+  const w = imgNaturalWidth.value || 800;
+  const h = imgNaturalHeight.value || 600;
+
+  if (points.length === 1) {
+    return [points[0][0] * w, points[0][1] * h];
   }
+  if (points.length === 2) {
+    return [
+      ((points[0][0] + points[1][0]) / 2) * w,
+      ((points[0][1] + points[1][1]) / 2) * h
+    ];
+  }
+
+  // 多边形面积加权质心 (Centroid of Polygon)
+  let area = 0;
+  let cx = 0;
+  let cy = 0;
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % n];
+    const factor = p1[0] * p2[1] - p2[0] * p1[1];
+    area += factor;
+    cx += (p1[0] + p2[0]) * factor;
+    cy += (p1[1] + p2[1]) * factor;
+  }
+  area = area * 0.5;
+
+  // 退化情况或计算无效时，使用算术平均顶点坐标降级
+  if (Math.abs(area) < 1e-6 || isNaN(cx) || isNaN(cy)) {
+    let sumX = 0;
+    let sumY = 0;
+    for (let i = 0; i < n; i++) {
+      sumX += points[i][0];
+      sumY += points[i][1];
+    }
+    return [(sumX / n) * w, (sumY / n) * h];
+  }
+
+  cx = cx / (6 * area);
+  cy = cy / (6 * area);
+
+  // 边界保护（确保中心点处于图片像素区域内）
+  cx = Math.max(0, Math.min(1, cx));
+  cy = Math.max(0, Math.min(1, cy));
+
+  return [cx * w, cy * h];
+};
+
+// 计算多边形中心编号徽章的动态尺寸（自适应当前画布缩放与文本长度）
+const getBadgeDimensions = (text) => {
+  const currentZoom = zoom.value || 1.0;
+  const height = 18 / currentZoom;
+  const charWidth = 6.5 / currentZoom;
+  const padding = 8 / currentZoom;
+  const width = Math.max(height, text.length * charWidth + padding);
+  const fontSize = 10 / currentZoom;
+  const strokeWidth = 1.2 / currentZoom;
+  return {
+    width,
+    height,
+    rx: height / 2,
+    fontSize,
+    strokeWidth
+  };
+};
+
+const selectPolygon = (idx) => {
+  if (activeTool.value === 'draw' && activePolygonPoints.value.length > 0) {
+    // 正在手动绘制打点中，不打断连线
+    return;
+  }
+  if (activeTool.value === 'pan') {
+    return;
+  }
+  if (activeTool.value !== 'eraser') {
+    activeTool.value = 'edit';
+  }
+  activePolyIndex.value = idx;
+
+  // 自动将右侧分类管理/实例列表中对应的项目平滑滚动至视口
+  nextTick(() => {
+    const el = document.getElementById(`inst-item-${idx}`);
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  });
 };
 
 const handlePolygonMouseDown = (e, polyIndex) => {

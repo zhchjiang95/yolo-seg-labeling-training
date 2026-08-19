@@ -1313,6 +1313,72 @@ select:focus {
 }
 
 /* ==========================================
+   多边形中心数字编号徽章 (与右侧实例列表联动)
+   ========================================== */
+.svg-poly-badge {
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+}
+
+.svg-poly-badge .poly-badge-bg {
+  fill-opacity: 0.92;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.svg-poly-badge:hover .poly-badge-bg {
+  fill-opacity: 1;
+  stroke: #ffffff !important;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9)) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
+.svg-poly-badge.active .poly-badge-bg {
+  fill-opacity: 1;
+  stroke: #ffffff !important;
+  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.95)) drop-shadow(0 2px 5px rgba(0, 0, 0, 0.5));
+}
+
+.svg-poly-badge .poly-badge-text {
+  fill: #ffffff;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', 'Outfit', sans-serif;
+  pointer-events: none;
+  user-select: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.svg-poly-badge.drawing {
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.svg-poly-badge.drawing .poly-badge-bg {
+  stroke-dasharray: 2 2;
+  animation: badgePulseAnim 1.2s ease-in-out infinite alternate;
+}
+
+.svg-poly-badge.sam-temp {
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.svg-poly-badge.sam-temp .poly-badge-bg {
+  stroke: #8b5cf6 !important;
+  stroke-dasharray: 3 2;
+  animation: badgePulseAnim 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes badgePulseAnim {
+  0% {
+    fill-opacity: 0.65;
+  }
+  100% {
+    fill-opacity: 0.98;
+  }
+}
+
+/* ==========================================
    右侧详情与实例列表
    ========================================== */
 .right-sidebar-card {
