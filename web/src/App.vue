@@ -967,64 +967,6 @@
                   #{{ polyIndex + 1 }}
                 </text>
               </g>
-
-              <!-- 7. 手动打点绘制中的临时多边形中心编号预览 -->
-              <g
-                v-if="activeTool === 'draw' && activePolygonPoints.length >= 3"
-                class="svg-poly-badge drawing"
-                :transform="`translate(${getPolygonCenter(activePolygonPoints)[0]}, ${getPolygonCenter(activePolygonPoints)[1]})`"
-              >
-                <rect
-                  :x="-getBadgeDimensions('#' + (polygons.length + 1)).width / 2"
-                  :y="-getBadgeDimensions('#' + (polygons.length + 1)).height / 2"
-                  :width="getBadgeDimensions('#' + (polygons.length + 1)).width"
-                  :height="getBadgeDimensions('#' + (polygons.length + 1)).height"
-                  :rx="getBadgeDimensions('#' + (polygons.length + 1)).rx"
-                  class="poly-badge-bg temp"
-                  :style="{
-                    fill: getPolyColor(activeClassIndex),
-                    stroke: '#ffffff',
-                    strokeWidth: `${getBadgeDimensions('#' + (polygons.length + 1)).strokeWidth}px`
-                  }"
-                />
-                <text
-                  class="poly-badge-text"
-                  :style="{ fontSize: `${getBadgeDimensions('#' + (polygons.length + 1)).fontSize}px` }"
-                  text-anchor="middle"
-                  dominant-baseline="central"
-                >
-                  #{{ polygons.length + 1 }}
-                </text>
-              </g>
-
-              <!-- 8. SAM 辅助模式下的预览多边形临时中心编号 -->
-              <g
-                v-if="activeTool === 'sam' && samPreviewPolygon && samPreviewPolygon.length >= 3"
-                class="svg-poly-badge sam-temp"
-                :transform="`translate(${getPolygonCenter(samPreviewPolygon)[0]}, ${getPolygonCenter(samPreviewPolygon)[1]})`"
-              >
-                <rect
-                  :x="-getBadgeDimensions('#' + (polygons.length + 1)).width / 2"
-                  :y="-getBadgeDimensions('#' + (polygons.length + 1)).height / 2"
-                  :width="getBadgeDimensions('#' + (polygons.length + 1)).width"
-                  :height="getBadgeDimensions('#' + (polygons.length + 1)).height"
-                  :rx="getBadgeDimensions('#' + (polygons.length + 1)).rx"
-                  class="poly-badge-bg sam-temp"
-                  :style="{
-                    fill: getPolyColor(activeClassIndex),
-                    stroke: '#ffffff',
-                    strokeWidth: `${getBadgeDimensions('#' + (polygons.length + 1)).strokeWidth}px`
-                  }"
-                />
-                <text
-                  class="poly-badge-text"
-                  :style="{ fontSize: `${getBadgeDimensions('#' + (polygons.length + 1)).fontSize}px` }"
-                  text-anchor="middle"
-                  dominant-baseline="central"
-                >
-                  #{{ polygons.length + 1 }}
-                </text>
-              </g>
             </svg>
           </div>
 
