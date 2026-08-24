@@ -181,7 +181,6 @@ header h1 {
 .glass-card {
   background: var(--bg-card);
   backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-color);
   border-radius: 16px;
   padding: 24px;
@@ -272,7 +271,7 @@ select:focus {
   height: 4px;
   border-radius: 2px;
   outline: none;
-  background: rgba(255, 255, 255, 0.1);
+  background: #ada6a61a;
   -webkit-appearance: none;
   appearance: none;
 }
@@ -361,7 +360,7 @@ select:focus {
 }
 
 .sys-info-item {
-  background: rgba(0, 0, 0, 0.2);
+  background: #dddddd1a;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 12px;
@@ -478,7 +477,7 @@ select:focus {
 }
 
 .stat-item {
-  background: rgba(255, 255, 255, 0.02);
+  background: #ada6a61a;
   border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 10px;
   padding: 12px;
@@ -563,7 +562,7 @@ select:focus {
 
 .console-btn:hover {
   background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  color: #c3b9b9;
   border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -636,7 +635,6 @@ select:focus {
   width: 220px;
   background: var(--bg-card);
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
   text-align: left;
@@ -721,7 +719,6 @@ select:focus {
   padding: 4px 10px;
   background: var(--input-bg);
   backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   color: var(--text-primary);
@@ -1580,7 +1577,6 @@ select:focus {
   border-radius: 8px;
   background: var(--bg-card);
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border-color);
   box-shadow: var(--card-shadow);
   display: flex;
@@ -1632,7 +1628,8 @@ select:focus {
   left: 0;
   margin-top: 8px;
   width: 260px;
-  background: #ffffff;
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
   border: 1px solid var(--border-color);
   border-radius: 10px;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
@@ -1835,7 +1832,6 @@ select:focus {
   width: 270px;
   background: var(--bg-card);
   backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-color);
   border-radius: 12px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25), var(--inner-glow);
@@ -1965,7 +1961,6 @@ select:focus {
   width: 210px;
   background: var(--bg-card);
   backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-color);
   border-radius: 12px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25), var(--inner-glow);

@@ -507,7 +507,7 @@
           <svg style="width: 20px; height: 20px; margin: 0 auto 6px; display: block;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
           </svg>
-          点击或拖入 JPG/PNG 图片
+          点击或拖入图片到此处
           <input type="file" ref="uploadInputRef" style="display: none;" multiple accept="image/*" @change="handleFileUpload" />
         </div>
 
