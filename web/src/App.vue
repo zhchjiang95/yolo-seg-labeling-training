@@ -618,7 +618,13 @@
 
             <!-- 一键模型识别悬停下拉列表 (高亮亮紫科技感按钮) -->
             <div class="dropdown-wrapper">
-              <button class="tool-btn" :disabled="!currentImage || isAutoDetecting" style="border-color: #a855f7; color: #a855f7; background: rgba(168, 85, 247, 0.08); font-weight: 600;" title="鼠标悬浮选择模型识别全图">
+              <button 
+                class="tool-btn" 
+                :disabled="!currentImage || isAutoDetecting" 
+                style="border-color: #a855f7; color: #a855f7; background: rgba(168, 85, 247, 0.08); font-weight: 600;" 
+                title="点击直接使用推荐权重识别，或鼠标悬浮展开选择模型权重"
+                @click="handleDefaultAutoDetect"
+              >
                 <span v-if="isAutoDetecting" class="status-dot active" style="margin-right: 4px; background: #a855f7;"></span>
                 <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 6v6l4 2"/>
@@ -633,18 +639,24 @@
               <div class="dropdown-menu">
                 <div class="dropdown-header-title">选择识别权重</div>
                 <div class="dropdown-list-scroller">
-                  <!-- 默认最佳模型 -->
-                  <button class="dropdown-item" @click="autoDetect(null)" :disabled="isAutoDetecting">
-                    <span style="font-weight: 600; color: #a855f7;">使用系统默认权重</span>
-                    <span class="dropdown-item-path">自动寻找 runs/best.pt 或者 yolo26s-seg.pt</span>
-                  </button>
                   <!-- 扫描出来的模型 -->
-                  <button v-for="model in modelsList" :key="model.path" class="dropdown-item" @click="autoDetect(model.path)" :disabled="isAutoDetecting">
-                    <span>{{ model.name }}</span>
+                  <button 
+                    v-for="model in modelsList" 
+                    :key="model.path" 
+                    class="dropdown-item" 
+                    @click="autoDetect(model.path)" 
+                    :disabled="isAutoDetecting"
+                    :title="model.path"
+                  >
+                    <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 6px;">
+                      <span style="font-weight: 600;">{{ model.name }}</span>
+                      <span v-if="model.type === 'trained'" class="model-badge trained">训练产物</span>
+                      <span v-else-if="model.type === 'default'" class="model-badge default">预置基础</span>
+                    </div>
                     <span class="dropdown-item-path">{{ model.path }}</span>
                   </button>
-                  <div v-if="modelsList.length === 0" style="padding: 10px; text-align: center; font-size: 11px; color: var(--text-muted);">
-                    无其它权重文件 (.pt)
+                  <div v-if="modelsList.length === 0" style="padding: 12px; text-align: center; font-size: 11px; color: var(--text-muted);">
+                    暂无可用的分割权重 (.pt)
                   </div>
                 </div>
               </div>
@@ -2130,10 +2142,25 @@ const clearPolygons = () => {
 // 6. 模型自动检测与 SAM 点击预测
 // ==========================================
 
+const handleDefaultAutoDetect = () => {
+  if (!currentImage.value) {
+    showToast('请先在左侧选择一张图片', 'warning');
+    return;
+  }
+  if (modelsList.value && modelsList.value.length > 0) {
+    // 默认使用列表中排序最靠前的优先模型（如最佳训练权重 best.pt）
+    autoDetect(modelsList.value[0].path);
+  } else {
+    showToast('未检测到可用的分割权重模型 (.pt)，请检查 models/ 或 runs/ 目录', 'warning');
+  }
+};
+
 const autoDetect = async (modelPath = null) => {
   if (!currentImage.value) return;
   isAutoDetecting.value = true;
-  showToast(modelPath ? '正在加载自定义模型识别中...' : '正在加载默认模型识别中...', 'info');
+  const targetModel = modelsList.value.find(m => m.path === modelPath);
+  const modelName = targetModel ? targetModel.name : (modelPath || '分割模型');
+  showToast(`正在加载【${modelName}】识别中...`, 'info');
   try {
     const res = await fetch(`${API_BASE}/api/labeling/auto_detect?dataset=${currentDataset.value}`, {
       method: 'POST',

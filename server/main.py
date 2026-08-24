@@ -359,7 +359,13 @@ class LabelingPredictor:
             ]
             found_path = None
             models_dir = self.workspace_dir / "models"
+            world_sub_dir = models_dir / "world"
             for name in candidate_names:
+                # 优先检索 models/world/ 子目录，再检索 models/ 根目录
+                p_sub = world_sub_dir / name
+                if p_sub.exists():
+                    found_path = p_sub
+                    break
                 p = models_dir / name
                 if p.exists():
                     found_path = p
@@ -370,7 +376,7 @@ class LabelingPredictor:
                 self.yolo_world_model = YOLOWorld(str(found_path))
             else:
                 # 若无本地权重，退回默认名称
-                print("[YOLOWorld] 未在 models/ 目录下找到本地 YOLO-World 权重，将尝试网络在线加载/下载 yolov8m-worldv2.pt...")
+                print("[YOLOWorld] 未在 models/ 或 models/world/ 目录下找到本地 YOLO-World 权重，将尝试网络在线加载/下载 yolov8m-worldv2.pt...")
                 self.yolo_world_model = YOLOWorld("yolov8m-worldv2.pt")
         return self.yolo_world_model
 
@@ -403,7 +409,12 @@ class LabelingPredictor:
         if best_pt:
             default_path = best_pt
         else:
-            default_path = self.workspace_dir / "models" / "yolo26s-seg.pt"
+            # 优先查找 models/segment/yolo26s-seg.pt，再查找 models/yolo26s-seg.pt
+            seg_path = self.workspace_dir / "models" / "segment" / "yolo26s-seg.pt"
+            if seg_path.exists():
+                default_path = seg_path
+            else:
+                default_path = self.workspace_dir / "models" / "yolo26s-seg.pt"
         
         default_path_str = str(default_path.resolve())
         if default_path_str not in self.yolo_models:
@@ -426,13 +437,20 @@ class LabelingPredictor:
                 "sam2.1_t.pt"
             ]
             found_path = None
+            models_dir = self.workspace_dir / "models"
+            sam_sub_dir = models_dir / "sam"
             for name in sam_names:
-                p = self.workspace_dir / "models" / name
+                # 优先检索 models/sam/ 子目录，再检索 models/ 根目录
+                p_sub = sam_sub_dir / name
+                if p_sub.exists():
+                    found_path = p_sub
+                    break
+                p = models_dir / name
                 if p.exists():
                     found_path = p
                     break
             if found_path is None:
-                raise FileNotFoundError("未在 models/ 目录下检测到 SAM 权重 (例如 sam3.1_multiplex.pt、sam3.pt、sam2.1_b.pt、mobile_sam.pt)。")
+                raise FileNotFoundError("未在 models/ 或 models/sam/ 目录下检测到 SAM 权重 (例如 sam3.1_multiplex.pt、sam3.pt、sam2.1_b.pt、mobile_sam.pt)。")
             
             from ultralytics import SAM
             self.sam_model = SAM(str(found_path))
@@ -941,47 +959,89 @@ def auto_detect_polygons(req: Dict[str, str], dataset: str = "default"):
 # 7.1 获取可用的分割模型列表
 @app.get("/api/labeling/models")
 def get_labeling_models():
-    """扫描 models 目录以及已训练 runs 目录下的所有分割权重（排除 sam 权重）"""
+    """
+    扫描 runs 训练产物目录以及 models/ (含 models/segment/) 目录下的所有分割权重。
+    自动排除 SAM 交互分割权重与 YOLO-World 开放词汇模型。
+    """
     models_dir = WORKSPACE_DIR / "models"
+    segment_dir = models_dir / "segment"
     runs_dir = WORKSPACE_DIR / "runs"
     
     models_dir.mkdir(parents=True, exist_ok=True)
     
     models_list = []
+    seen_paths = set()
     
-    # 1. 扫描 models 目录下的 pt 文件
+    def is_seg_weight(filename: str) -> bool:
+        fn_lower = filename.lower()
+        if not fn_lower.endswith(".pt"):
+            return False
+        # 排除 SAM 系列与 YOLO-World 系列权重
+        if "sam" in fn_lower or "world" in fn_lower:
+            return False
+        return True
+
+    # 1. 递归扫描 runs 目录下的已训练 pt 文件 (优先展示训练权重)
+    trained_models = []
+    if runs_dir.exists():
+        for file in runs_dir.rglob("*.pt"):
+            if is_seg_weight(file.name):
+                try:
+                    rel_path = file.relative_to(WORKSPACE_DIR).as_posix()
+                except Exception:
+                    rel_path = str(file)
+                    
+                if rel_path in seen_paths:
+                    continue
+                seen_paths.add(rel_path)
+                    
+                display_name = file.name
+                priority = 2
+                if file.name == "best.pt":
+                    display_name = "best.pt (最佳权重)"
+                    priority = 0
+                elif file.name == "last.pt":
+                    display_name = "last.pt (最新权重)"
+                    priority = 1
+                    
+                trained_models.append({
+                    "name": display_name,
+                    "path": rel_path,
+                    "type": "trained",
+                    "_priority": priority
+                })
+        # 训练模型按优先级排序 (best.pt > last.pt > 其他)
+        trained_models.sort(key=lambda x: x["_priority"])
+        for item in trained_models:
+            item.pop("_priority", None)
+            models_list.append(item)
+
+    # 2. 扫描 models/segment 专有分类子目录下的 pt 文件
+    if segment_dir.exists():
+        for file in segment_dir.iterdir():
+            if file.is_file() and is_seg_weight(file.name):
+                rel_path = f"models/segment/{file.name}"
+                if rel_path not in seen_paths:
+                    seen_paths.add(rel_path)
+                    models_list.append({
+                        "name": file.name,
+                        "path": rel_path,
+                        "type": "default" if file.name == "yolo26s-seg.pt" else "custom"
+                    })
+
+    # 3. 扫描 models 根目录下的 pt 文件 (兼容直接放置分割模型)
     if models_dir.exists():
         for file in models_dir.iterdir():
-            if file.is_file() and file.suffix.lower() == ".pt":
-                if "sam" not in file.name.lower():
-                    rel_path = f"models/{file.name}"
+            if file.is_file() and is_seg_weight(file.name):
+                rel_path = f"models/{file.name}"
+                if rel_path not in seen_paths:
+                    seen_paths.add(rel_path)
                     models_list.append({
                         "name": file.name,
                         "path": rel_path,
                         "type": "default" if file.name == "yolo26s-seg.pt" else "custom"
                     })
                     
-    # 2. 递归扫描 runs 目录下的 pt 文件
-    if runs_dir.exists():
-        for file in runs_dir.rglob("*.pt"):
-            if "sam" not in file.name.lower():
-                try:
-                    rel_path = file.relative_to(WORKSPACE_DIR).as_posix()
-                except Exception:
-                    rel_path = str(file)
-                    
-                display_name = file.name
-                if file.name == "best.pt":
-                    display_name = "best.pt (最佳权重)"
-                elif file.name == "last.pt":
-                    display_name = "last.pt (最新权重)"
-                    
-                models_list.append({
-                    "name": f"{display_name} - {file.parent.parent.name}",
-                    "path": rel_path,
-                    "type": "trained"
-                })
-                
     return models_list
 
 # 8. SAM 辅助点击预测

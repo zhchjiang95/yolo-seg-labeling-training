@@ -69,9 +69,10 @@ xnl-training-platform/
 │   │       ├── labels/          # 当前数据集自动保存的归一化 YOLO-seg labels 文件 (.txt)
 │   │       └── classes.txt      # 当前数据集的分类标签清单
 │   └── 数据图集_yolo.zip    # 已标注的数据集压缩包 (未配置本地数据集时回退数据源)
-├── models/                      # 预训练模型放置目录
-│   └── yolo26s-seg.pt           # 预训练权重
-│   # 如果要使用 SAM 辅助，建议将权重下载并命名为 models/sam2_b.pt
+├── models/                      # 预训练模型放置目录 (支持按类型子文件夹分类)
+│   ├── segment/                 # 实例分割权重 (如 yolo26s-seg.pt)
+│   ├── world/                   # YOLO-World 开放词汇权重 (如 yolov8l-worldv2.pt)
+│   └── sam/                     # SAM 交互式打点分割权重 (如 sam2.1_b.pt)
 ├── server/                      # FastAPI 后端服务
 │   ├── main.py                  # API 路由、标注算法与系统监控
 │   ├── trainer.py               # 训练状态机与子进程管道解析
@@ -204,10 +205,10 @@ xnl-training-platform/
 - yolo26s-seg.pt
 - yolov8x-worldv2.pt
 
-出于仓库体积与克隆速度考量，预训练模型文件未包含在 Git 提交中。首次运行前请将所需的模型权重文件放入 `models/` 目录下：
-* **YOLO 分割模型**：例如 `yolo26s-seg.pt`
-* **YOLO-World 开放词汇模型**：例如 `yolov8x-worldv2.pt` / `yolov8l-worldv2.pt` / `yolov8m-worldv2.pt` （输入 Prompt 如 pig 一键识别）
-* **SAM 智能标注模型**：例如 `sam2_b.pt` （如需启用 SAM 2 智能打点标注）
+出于仓库体积与克隆速度考量，预训练模型文件未包含在 Git 提交中。首次运行前请将所需的模型权重文件放入 `models/` 目录下（支持放入对应的分类子文件夹或根目录）：
+* **YOLO 分割模型**：放置在 `models/segment/` 或 `models/` 下（例如 `yolo26s-seg.pt`），供“模型识别”和训练微调使用。
+* **YOLO-World 开放词汇模型**：放置在 `models/world/` 或 `models/` 下（例如 `yolov8l-worldv2.pt`、`yolov8m-worldv2.pt`），供“Prompt 开放词汇识别”使用。
+* **SAM 智能标注模型**：放置在 `models/sam/` 或 `models/` 下（例如 `sam2.1_b.pt`、`mobile_sam.pt`），供智能打点辅助分割使用。
 
 ---
 
