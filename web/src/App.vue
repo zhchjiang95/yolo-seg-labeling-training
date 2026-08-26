@@ -616,51 +616,77 @@
             </div>
 
 
-            <!-- 一键模型识别悬停下拉列表 (高亮亮紫科技感按钮) -->
-            <div class="dropdown-wrapper">
+            <!-- 模型识别控件块 (点击展开悬浮 Popover 选择模型并执行识别或识别+优化) -->
+            <div class="model-popover-wrapper" style="position: relative; display: inline-block;">
               <button 
                 class="tool-btn" 
-                :disabled="!currentImage || isAutoDetecting" 
+                :class="{ active: showModelPopover }"
+                :disabled="!currentImage || isAutoDetecting || isAutoDetectAndRefining" 
                 style="border-color: #a855f7; color: #a855f7; background: rgba(168, 85, 247, 0.08); font-weight: 600;" 
-                title="点击直接使用推荐权重识别，或鼠标悬浮展开选择模型权重"
-                @click="handleDefaultAutoDetect"
+                title="点击展开选择模型权重，支持普通识别或识别后自动使用 SAM 优化"
+                @click.stop="toggleModelPopover"
               >
-                <span v-if="isAutoDetecting" class="status-dot active" style="margin-right: 4px; background: #a855f7;"></span>
-                <svg v-else style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 6v6l4 2"/>
-                </svg>
-                模型识别
+                <span v-if="isAutoDetecting || isAutoDetectAndRefining" class="spinner" style="margin-right: 4px;"></span>
+                <span v-else style="font-size: 13px; margin-right: 2px;">✨</span>
+                <span>模型识别</span>
                 <svg style="width: 8px; height: 8px; margin-left: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                   <polyline points="6 9 12 15 18 9"/>
                 </svg>
               </button>
               
-              <!-- 悬浮下拉菜单 -->
-              <div class="dropdown-menu">
-                <div class="dropdown-header-title">选择识别权重</div>
-                <div class="dropdown-list-scroller">
-                  <!-- 扫描出来的模型 -->
-                  <button 
-                    v-for="model in modelsList" 
-                    :key="model.path" 
-                    class="dropdown-item" 
-                    @click="autoDetect(model.path)" 
-                    :disabled="isAutoDetecting"
-                    :title="model.path"
-                  >
-                    <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 6px;">
-                      <span style="font-weight: 600;">{{ model.name }}</span>
-                      <span v-if="model.type === 'trained'" class="model-badge trained">训练产物</span>
-                      <span v-else-if="model.type === 'default'" class="model-badge default">预置基础</span>
+              <!-- 悬浮在按钮下方的 Popover 弹窗 -->
+              <transition name="popover-fade">
+                <div v-if="showModelPopover" class="model-popover-panel" @click.stop>
+                  <div class="popover-arrow"></div>
+                  
+                  <div class="model-popover-header">
+                    <span style="font-weight: 600; font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 4px;">
+                      ✨ YOLO 模型目标识别
+                    </span>
+                    <button class="popover-close-btn" @click="showModelPopover = false" title="关闭">×</button>
+                  </div>
+
+                  <div class="model-popover-body">
+                    <div style="margin-bottom: 12px;">
+                      <label style="font-size: 11px; color: var(--text-secondary); margin-bottom: 5px; display: block;">选择分割权重：</label>
+                      <select v-model="selectedModelPath" class="model-popover-select">
+                        <option v-for="model in modelsList" :key="model.path" :value="model.path">
+                          {{ model.name }} ({{ model.type === 'trained' ? '训练产物' : '内置权重' }})
+                        </option>
+                      </select>
+                      <div v-if="modelsList.length === 0" style="font-size: 10.5px; color: var(--warning); margin-top: 4px;">
+                        未检测到可用权重，请检查 models/ 或 runs/ 目录
+                      </div>
                     </div>
-                    <span class="dropdown-item-path">{{ model.path }}</span>
-                  </button>
-                  <div v-if="modelsList.length === 0" style="padding: 12px; text-align: center; font-size: 11px; color: var(--text-muted);">
-                    暂无可用的分割权重 (.pt)
+
+                    <!-- 动作按钮组：识别 & 识别并使用SAM优化 -->
+                    <div style="display: flex; gap: 8px;">
+                      <button 
+                        class="model-popover-detect-btn" 
+                        :disabled="!currentImage || isAutoDetecting || isAutoDetectAndRefining || !selectedModelPath" 
+                        @click="handleDetectOnly"
+                        title="使用选中的 YOLO 模型进行目标实例分割"
+                      >
+                        <span v-if="isAutoDetecting" class="spinner" style="margin-right: 4px;"></span>
+                        <span>{{ isAutoDetecting ? '识别中...' : '全图识别' }}</span>
+                      </button>
+
+                      <button 
+                        class="model-popover-refine-btn" 
+                        :disabled="!currentImage || isAutoDetecting || isAutoDetectAndRefining || !selectedModelPath" 
+                        @click="handleDetectAndRefine"
+                        title="使用选中的 YOLO 模型检测出目标后，立即通过 SAM 自动重分割优化全图边缘"
+                      >
+                        <span v-if="isAutoDetectAndRefining" class="spinner" style="margin-right: 4px;"></span>
+                        <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
+                        <span>{{ isAutoDetectAndRefining ? '识别并优化中...' : '识别并SAM优化' }}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </transition>
             </div>
+
 
             <!-- Prompt 开放词汇智能识别控件块 (按需点击展开悬浮 Popover) -->
             <div class="prompt-popover-wrapper" style="position: relative; display: inline-block;">
@@ -1164,7 +1190,7 @@
           <!-- 键盘快捷键引导 -->
           <div style="font-size: 11px; color: var(--text-muted); line-height: 1.5;">
             <div>⌨️ <strong>快捷键引导：</strong></div>
-            <div>• <kbd>Ctrl+R / 悬浮按钮</kbd> : 使用 SAM 重新优化选中实例边缘</div>
+            <div>• <kbd>Ctrl+R</kbd> : 编辑模式使用 SAM 重新优化选中实例边缘</div>
             <div>• <kbd>Enter</kbd> : 闭合手动连线 / 确认SAM生成</div>
             <div>• <kbd>Esc</kbd> : 取消手动连线 / 撤销SAM的点击点</div>
             <div>• <kbd>Delete / Backspace</kbd> : 删除选中的多边形</div>
@@ -1470,6 +1496,28 @@ const activePolyIndex = ref(null);
 const pendingDeletePolyIndex = ref(null);
 let pendingDeleteTimer = null;
 const modelsList = ref([]); // 后端扫描出的 YOLO-seg 模型列表
+const selectedModelPath = ref(''); // 当前选中的模型路径
+const showModelPopover = ref(false); // 控制模型识别 Popover 的显隐
+const isAutoDetectAndRefining = ref(false); // 是否处于“识别并优化”执行中
+
+const toggleModelPopover = () => {
+  showModelPopover.value = !showModelPopover.value;
+  if (showModelPopover.value) {
+    showPromptPopover.value = false;
+    if (!selectedModelPath.value && modelsList.value.length > 0) {
+      selectedModelPath.value = modelsList.value[0].path;
+    }
+  }
+};
+
+const closeModelPopoverOnOutside = (e) => {
+  if (showModelPopover.value) {
+    const el = document.querySelector('.model-popover-wrapper');
+    if (el && !el.contains(e.target)) {
+      showModelPopover.value = false;
+    }
+  }
+};
 
 // 拖拽与缩水平移状态
 const zoom = ref(1.0);
@@ -1536,6 +1584,9 @@ const showPromptPopover = ref(false);
 
 const togglePromptPopover = () => {
   showPromptPopover.value = !showPromptPopover.value;
+  if (showPromptPopover.value) {
+    showModelPopover.value = false;
+  }
 };
 
 const closePromptPopoverOnOutside = (e) => {
@@ -1546,6 +1597,7 @@ const closePromptPopoverOnOutside = (e) => {
     }
   }
 };
+
 
 // 多边形填充不透明度 (0.1 ~ 0.8，默认 0.35)
 const polyFillOpacity = ref(0.35);
@@ -1725,11 +1777,15 @@ const fetchModelsList = async () => {
     const res = await fetch(`${API_BASE}/api/labeling/models`);
     if (res.ok) {
       modelsList.value = await res.json();
+      if (modelsList.value.length > 0 && !selectedModelPath.value) {
+        selectedModelPath.value = modelsList.value[0].path;
+      }
     }
   } catch (err) {
     console.error('获取权重列表失败:', err);
   }
 };
+
 
 // 选定并加载某张图片的数据
 const selectImage = async (img) => {
@@ -2242,16 +2298,101 @@ const clearPolygons = () => {
 // 6. 模型自动检测与 SAM 点击预测
 // ==========================================
 
-const handleDefaultAutoDetect = () => {
+// 仅模型识别
+const handleDetectOnly = async () => {
   if (!currentImage.value) {
     showToast('请先在左侧选择一张图片', 'warning');
     return;
   }
-  if (modelsList.value && modelsList.value.length > 0) {
-    // 默认使用列表中排序最靠前的优先模型（如最佳训练权重 best.pt）
-    autoDetect(modelsList.value[0].path);
-  } else {
-    showToast('未检测到可用的分割权重模型 (.pt)，请检查 models/ 或 runs/ 目录', 'warning');
+  if (!selectedModelPath.value) {
+    showToast('请先选择一个分割权重模型', 'warning');
+    return;
+  }
+  showModelPopover.value = false;
+  await autoDetect(selectedModelPath.value);
+};
+
+// 模型识别并自动使用 SAM 优化全部
+const handleDetectAndRefine = async () => {
+  if (!currentImage.value) {
+    showToast('请先在左侧选择一张图片', 'warning');
+    return;
+  }
+  if (!selectedModelPath.value) {
+    showToast('请先选择一个分割权重模型', 'warning');
+    return;
+  }
+  
+  const modelPath = selectedModelPath.value;
+  const targetModel = modelsList.value.find(m => m.path === modelPath);
+  const modelName = targetModel ? targetModel.name : modelPath;
+  
+  isAutoDetectAndRefining.value = true;
+  showModelPopover.value = false;
+  showToast(`正在加载【${modelName}】检测并准备 SAM 边缘优化...`, 'info');
+  
+  try {
+    // 1. 调用模型检测
+    const res = await fetch(`${API_BASE}/api/labeling/auto_detect?dataset=${currentDataset.value}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        name: currentImage.value.name,
+        model_path: modelPath
+      })
+    });
+    
+    if (!res.ok) {
+      const err = await res.json();
+      showToast('自动检测失败: ' + (err.detail || '模型加载出错'), 'error');
+      return;
+    }
+    
+    const data = await res.json();
+    if (!data.polygons || data.polygons.length === 0) {
+      showToast('未检测到任何目标实例', 'warning');
+      return;
+    }
+    
+    const currentTargetClass = activeClassIndex.value;
+    const rawPolygons = data.polygons.map(poly => ({
+      class_id: currentTargetClass,
+      points: poly.points
+    }));
+    
+    showToast(`已检测到 ${rawPolygons.length} 个实例，正在调用 SAM 进行全图边缘高清精修...`, 'info');
+    
+    // 2. 紧接着调用 SAM refine 全图优化
+    const refineRes = await fetch(`${API_BASE}/api/labeling/sam_refine?dataset=${currentDataset.value}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: currentImage.value.name,
+        polygons: rawPolygons,
+        padding: 0.03
+      })
+    });
+    
+    if (refineRes.ok) {
+      const refineData = await refineRes.json();
+      if (refineData.polygons && refineData.polygons.length > 0) {
+        polygons.value = refineData.polygons;
+        activePolyIndex.value = null;
+        const targetClassName = classes.value[currentTargetClass] || `类别#${currentTargetClass + 1}`;
+        showToast(`✨ 识别并 SAM 优化成功！共生成 ${refineData.polygons.length} 个高清实例，已应用【${targetClassName}】标签。`, 'success');
+        return;
+      }
+    }
+    
+    // 若 SAM 优化接口未返回或异常，回退使用识别出的多边形
+    polygons.value = rawPolygons;
+    activePolyIndex.value = null;
+    showToast(`模型检测成功（已生成 ${rawPolygons.length} 个实例），SAM 优化已跳过。`, 'info');
+  } catch (err) {
+    console.error('识别并优化出错:', err);
+    showToast('连接识别或 SAM 服务异常', 'error');
+  } finally {
+    isAutoDetectAndRefining.value = false;
   }
 };
 
@@ -2295,6 +2436,7 @@ const autoDetect = async (modelPath = null) => {
     isAutoDetecting.value = false;
   }
 };
+
 
 const promptDetect = async () => {
   if (!currentImage.value) {
@@ -2866,6 +3008,7 @@ onMounted(async () => {
   fetchTrainStatus();
   
   window.addEventListener('click', closePromptPopoverOnOutside);
+  window.addEventListener('click', closeModelPopoverOnOutside);
   if (currentTab.value === 'label') {
     fetchImageList();
     fetchModelsList();
@@ -2882,11 +3025,13 @@ onUnmounted(() => {
   closeLogStream();
   
   window.removeEventListener('click', closePromptPopoverOnOutside);
+  window.removeEventListener('click', closeModelPopoverOnOutside);
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
   window.removeEventListener('mousemove', handleMouseMoveGlobal);
   window.removeEventListener('blur', handleWindowBlur);
 });
+
 </script>
 
 <style scoped>
