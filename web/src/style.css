@@ -870,6 +870,7 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   padding: 8px 12px 8px 14px;
   background: rgba(0, 0, 0, 0.02);
   border: 1px solid var(--border-color);
