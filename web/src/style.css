@@ -2016,5 +2016,128 @@ select:focus {
   transform: translateX(-50%) translateY(-8px) scale(0.95);
 }
 
+/* ==========================================
+   选中实例悬浮操作条 (Floating Instance Mini Bar)
+   ========================================== */
+.instance-floating-bar {
+  position: absolute;
+  z-index: 60;
+  pointer-events: auto;
+  transform-origin: bottom center;
+  user-select: none;
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.3));
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.floating-bar-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(18, 18, 32, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  border-radius: 20px;
+  box-shadow: 0 0 14px rgba(139, 92, 246, 0.2);
+  white-space: nowrap;
+}
+
+.light-theme .floating-bar-content,
+:not(.dark-theme) .floating-bar-content {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(139, 92, 246, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 0 10px rgba(139, 92, 246, 0.15);
+}
+
+.floating-bar-title {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 0 4px;
+}
+
+.floating-refine-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.35);
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  line-height: 1.2;
+}
+
+.floating-refine-btn:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.5);
+  filter: brightness(1.08);
+}
+
+.floating-refine-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.floating-refine-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  filter: grayscale(0.6);
+}
+
+.floating-refine-btn.all-btn {
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.35);
+}
+
+.floating-refine-btn.all-btn:hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(168, 85, 247, 0.5);
+}
+
+.floating-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+
+.floating-delete-btn:hover {
+  background: #ef4444;
+  color: #ffffff;
+  transform: scale(1.08);
+}
+
+.floating-bar-arrow {
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgba(18, 18, 32, 0.92);
+}
+
+.light-theme .floating-bar-arrow,
+:not(.dark-theme) .floating-bar-arrow {
+  border-top-color: rgba(255, 255, 255, 0.95);
+}
+
+
 
 

@@ -726,7 +726,10 @@
                 </div>
               </transition>
             </div>
+
             <button class="tool-btn" :class="{ active: activeTool === 'pan' }" @click="setTool('pan')" title="手形：左键拖拽平移图片">
+
+
               <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M5 10V8a7 7 0 0 1 14 0v2M12 3v5"/>
               </svg>
@@ -980,9 +983,70 @@
                 </text>
               </g>
             </svg>
+
+            <!-- 7. 编辑模式下：选中的多边形实例上方悬浮操作条 (Floating Bubble Action Bar) -->
+            <transition name="popover-fade">
+              <div 
+                v-if="activeTool === 'edit' && activePolyIndex !== null && polygons[activePolyIndex] && !polygons[activePolyIndex].hidden && activePolyFloatingPos"
+                class="instance-floating-bar"
+                :style="{
+                  left: `${activePolyFloatingPos.x}px`,
+                  top: `${activePolyFloatingPos.y}px`,
+                  transform: `translate(-50%, -100%) scale(${1 / zoom})`
+                }"
+                @mousedown.stop
+                @click.stop
+              >
+                <div class="floating-bar-content">
+                  <!-- 1. 纯数字序号徽章 (不显示冗长类别名) -->
+                  <span class="floating-bar-title" :style="{ color: getPolyColor(polygons[activePolyIndex].class_id) }">
+                    #{{ activePolyIndex + 1 }}
+                  </span>
+
+                  <!-- 2. 当前选中实例 SAM 优化按钮 (仅保留星星图标) -->
+                  <button 
+                    class="floating-refine-btn" 
+                    :disabled="isRefiningSingleIndex === activePolyIndex || isRefiningAll"
+                    @click="refineSinglePolygon(activePolyIndex)"
+                    title="使用 SAM 重新高精贴合此实例边缘 (快捷键 Ctrl+R)"
+                  >
+                    <span v-if="isRefiningSingleIndex === activePolyIndex" class="spinner" style="width: 10px; height: 10px; margin-right: 3px;"></span>
+                    <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
+                    <span>{{ isRefiningSingleIndex === activePolyIndex ? '优化中...' : 'SAM优化' }}</span>
+                  </button>
+
+                  <!-- 3. 全图所有实例 SAM 优化全部按钮 (仅保留星星图标) -->
+                  <button 
+                    class="floating-refine-btn all-btn" 
+                    :disabled="isRefiningAll || isRefiningSingleIndex !== null || polygons.length === 0"
+                    @click="refineAllPolygons"
+                    :title="`使用 SAM 批量重新优化全图所有 ${polygons.length} 个实例边缘`"
+                  >
+                    <span v-if="isRefiningAll" class="spinner" style="width: 10px; height: 10px; margin-right: 3px;"></span>
+                    <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
+                    <span>{{ isRefiningAll ? '批量优化中...' : 'SAM优化全部' }}</span>
+                  </button>
+
+                  <!-- 4. 实例删除快捷按钮 -->
+                  <button 
+                    class="floating-delete-btn"
+                    @click="deletePolygon(activePolyIndex)"
+                    title="删除此实例 (Delete / Backspace)"
+                  >
+                    <svg style="width: 12px; height: 12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                    </svg>
+                  </button>
+                </div>
+                <div class="floating-bar-arrow"></div>
+              </div>
+            </transition>
+
           </div>
 
           <!-- 缩放指示器 -->
+
           <div v-if="currentImage" class="zoom-indicator">
             Zoom: {{ Math.round(zoom * 100) }}% | W:{{ imgNaturalWidth }} H:{{ imgNaturalHeight }}
           </div>
@@ -1068,6 +1132,7 @@
               </button>
 
               <div style="position: relative; display: inline-flex; align-items: center;">
+
                 <transition name="delete-tooltip-fade">
                   <div 
                     v-if="pendingDeletePolyIndex === idx" 
@@ -1099,6 +1164,7 @@
           <!-- 键盘快捷键引导 -->
           <div style="font-size: 11px; color: var(--text-muted); line-height: 1.5;">
             <div>⌨️ <strong>快捷键引导：</strong></div>
+            <div>• <kbd>Ctrl+R / 悬浮按钮</kbd> : 使用 SAM 重新优化选中实例边缘</div>
             <div>• <kbd>Enter</kbd> : 闭合手动连线 / 确认SAM生成</div>
             <div>• <kbd>Esc</kbd> : 取消手动连线 / 撤销SAM的点击点</div>
             <div>• <kbd>Delete / Backspace</kbd> : 删除选中的多边形</div>
@@ -1106,6 +1172,7 @@
           </div>
         </div>
       </div>
+
     </div>
   </div>
 </template>
@@ -1428,8 +1495,41 @@ const samPreviewPolygon = ref(null); // 归一化坐标点数组
 const isAutoDetecting = ref(false);
 const isSamPredicting = ref(false);
 
+// SAM 边缘重分割优化状态
+const isRefiningSingleIndex = ref(null);
+const isRefiningAll = ref(false);
+
+// 计算当前选中的多边形顶部悬浮条位置（图片原始像素坐标）
+const activePolyFloatingPos = computed(() => {
+  if (activePolyIndex.value === null || !polygons.value[activePolyIndex.value]) return null;
+  const poly = polygons.value[activePolyIndex.value];
+  if (!poly.points || poly.points.length === 0) return null;
+  
+  const w = imgNaturalWidth.value || 800;
+  const h = imgNaturalHeight.value || 600;
+  
+  let minY = Infinity;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  
+  for (const pt of poly.points) {
+    const px = pt[0] * w;
+    const py = pt[1] * h;
+    if (py < minY) minY = py;
+    if (px < minX) minX = px;
+    if (px > maxX) maxX = px;
+  }
+  
+  const centerX = (minX + maxX) / 2;
+  // 留出 8px 的向上安全间距（在缩放环境下转换为原始图像像素距离）
+  const topY = Math.max(0, minY - 8 / (zoom.value || 1.0));
+  
+  return { x: centerX, y: topY };
+});
+
 // Prompt 开放词汇识别
 const promptText = ref('pig');
+
 const promptConf = ref(0.01); // 默认 0.01 置信度，最大化捕获全图目标
 const isPromptDetecting = ref(false);
 const showPromptPopover = ref(false);
@@ -2294,6 +2394,99 @@ const confirmSAM = () => {
   showToast('SAM 实例已确认并创建', 'success');
 };
 
+// 优化单个多边形实例
+const refineSinglePolygon = async (idx) => {
+  if (!currentImage.value || idx === null || !polygons.value[idx]) return;
+  const targetPoly = polygons.value[idx];
+  if (!targetPoly.points || targetPoly.points.length < 3) {
+    showToast('该多边形顶点过少，无法优化', 'warning');
+    return;
+  }
+  
+  isRefiningSingleIndex.value = idx;
+  showToast(`正在通过 SAM 重新优化实例 #${idx + 1} 的边缘轮廓...`, 'info');
+  
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/sam_refine?dataset=${currentDataset.value}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: currentImage.value.name,
+        polygons: [{
+          class_id: targetPoly.class_id,
+          points: targetPoly.points
+        }],
+        padding: 0.03
+      })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.polygons && data.polygons.length > 0 && data.refined_count > 0) {
+        polygons.value[idx].points = data.polygons[0].points;
+        showToast(`✨ 实例 #${idx + 1} 已通过 SAM 优化完成！`, 'success');
+      } else {
+        showToast(`SAM 未能对实例 #${idx + 1} 产生更好边缘，已保留原标注`, 'warning');
+      }
+    } else {
+      const err = await res.json();
+      showToast('SAM 优化失败: ' + (err.detail || '接口错误'), 'error');
+    }
+  } catch (err) {
+    console.error('SAM 优化请求异常:', err);
+    showToast('连接 SAM 服务异常', 'error');
+  } finally {
+    isRefiningSingleIndex.value = null;
+  }
+};
+
+// 批量优化全图所有多边形实例
+const refineAllPolygons = async () => {
+  if (!currentImage.value || polygons.value.length === 0) {
+    showToast('当前没有标注项可供优化', 'warning');
+    return;
+  }
+  
+  isRefiningAll.value = true;
+  showToast(`正在通过 SAM 批量优化全部 ${polygons.value.length} 个实例边缘...`, 'info');
+  
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/sam_refine?dataset=${currentDataset.value}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: currentImage.value.name,
+        polygons: polygons.value.map(p => ({
+          class_id: p.class_id,
+          points: p.points
+        })),
+        padding: 0.03
+      })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.polygons && data.polygons.length > 0) {
+        for (let i = 0; i < data.polygons.length; i++) {
+          if (polygons.value[i] && data.polygons[i].points) {
+            polygons.value[i].points = data.polygons[i].points;
+          }
+        }
+        showToast(`✨ 批量优化完毕！共成功精修 ${data.refined_count || data.polygons.length} 个实例边缘。`, 'success');
+      }
+    } else {
+      const err = await res.json();
+      showToast('批量优化失败: ' + (err.detail || '接口错误'), 'error');
+    }
+  } catch (err) {
+    console.error('批量优化异常:', err);
+    showToast('连接服务失败', 'error');
+  } finally {
+    isRefiningAll.value = false;
+  }
+};
+
+
 // ==========================================
 // 7. 图片上传与删除
 // ==========================================
@@ -2581,8 +2774,14 @@ const handleKeyDown = (e) => {
     if (activeTool.value === 'edit' && activePolyIndex.value !== null) {
       deletePolygon(activePolyIndex.value);
     }
+  } else if ((e.ctrlKey || e.metaKey || e.altKey) && (e.key === 'r' || e.key === 'R')) {
+    if (!isInput && activeTool.value === 'edit' && activePolyIndex.value !== null) {
+      e.preventDefault();
+      refineSinglePolygon(activePolyIndex.value);
+    }
   }
 };
+
 
 const handleKeyUp = (e) => {
   if (e.key === ' ') {

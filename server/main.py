@@ -304,6 +304,12 @@ class PromptDetectRequest(BaseModel):
     conf: float = Field(default=0.25, ge=0.01, le=1.0, description="置信度阈值")
     class_id: int = Field(default=0, ge=0, description="默认分类索引 ID")
 
+class SAMRefineRequest(BaseModel):
+    name: str = Field(..., description="图片文件名")
+    polygons: List[PolygonItem] = Field(..., description="待优化的多边形列表，包含 class_id 与 points")
+    padding: float = Field(default=0.03, ge=0.0, le=0.2, description="外接矩形框外扩比例，防止边缘截断")
+
+
 class ClassesUpdateRequest(BaseModel):
     classes: List[str]
 
@@ -1221,7 +1227,101 @@ def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
         except Exception:
             pass
 
+# 8.2 SAM 实例边缘重分割优化 (Refine Polygons)
+@app.post("/api/labeling/sam_refine")
+def sam_refine_polygons(req: SAMRefineRequest, dataset: str = "default"):
+    """
+    根据已有多边形的外接矩形边界框，调用 SAM 模型重新进行超高精度的边缘分割，
+    将模型直接检测出的粗糙多边形一键精修吸附到物体的真实物理边缘。
+    """
+    image_path = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images" / req.name
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="图片不存在")
+        
+    if not req.polygons:
+        return {"polygons": [], "refined_count": 0}
+        
+    # 读取图片尺寸
+    img = cv2.imread(str(image_path))
+    if img is None:
+        raise HTTPException(status_code=500, detail="无法读取图像数据")
+    img_h, img_w = img.shape[:2]
+    
+    # 提取每个多边形的外接矩形框
+    boxes_xyxy = []
+    valid_indices = []
+    
+    for idx, poly in enumerate(req.polygons):
+        if not poly.points or len(poly.points) < 3:
+            continue
+        xs = [p[0] for p in poly.points]
+        ys = [p[1] for p in poly.points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        
+        w_box = max(max_x - min_x, 1e-4)
+        h_box = max(max_y - min_y, 1e-4)
+        
+        pad_x = w_box * req.padding
+        pad_y = h_box * req.padding
+        
+        x1 = max(0.0, min_x - pad_x) * img_w
+        y1 = max(0.0, min_y - pad_y) * img_h
+        x2 = min(1.0, max_x + pad_x) * img_w
+        y2 = min(1.0, max_y + pad_y) * img_h
+        
+        boxes_xyxy.append([x1, y1, x2, y2])
+        valid_indices.append(idx)
+        
+    if not boxes_xyxy:
+        return {
+            "status": "success",
+            "polygons": [poly.model_dump() for poly in req.polygons],
+            "refined_count": 0
+        }
+        
+    sam_results = None
+    try:
+        import torch
+        with torch.no_grad():
+            sam = predictor.get_sam_model()
+            # 批量传入 Bounding Box Prompts
+            sam_results = sam(str(image_path), bboxes=boxes_xyxy)
+            
+            refined_polygons = [poly.model_dump() for poly in req.polygons]
+            refined_count = 0
+            
+            if len(sam_results) > 0 and sam_results[0].masks is not None:
+                sam_masks = sam_results[0].masks.xyn
+                for b_idx, segment in enumerate(sam_masks):
+                    if b_idx < len(valid_indices):
+                        orig_idx = valid_indices[b_idx]
+                        if len(segment) >= 3:
+                            pts = simplify_polygon(segment.tolist())
+                            refined_polygons[orig_idx]["points"] = pts
+                            refined_count += 1
+                            
+        return {
+            "status": "success",
+            "polygons": refined_polygons,
+            "refined_count": refined_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SAM 优化失败: {str(e)}")
+    finally:
+        if sam_results is not None:
+            del sam_results
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
 @app.get("/api/logs")
+
 async def get_logs_stream(request: Request):
     """通过 SSE (Server-Sent Events) 实时推送训练日志"""
     async def log_generator():
