@@ -870,13 +870,25 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 8px 12px 8px 14px;
   background: rgba(0, 0, 0, 0.02);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative; /* 启用相对定位，便于子元素绝对定位 */
+  overflow: hidden;
+}
+
+.file-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3.5px;
+  background: transparent;
+  transition: all 0.25s ease;
 }
 
 .dark-theme .file-item {
@@ -884,13 +896,27 @@ select:focus {
 }
 
 .file-item:hover {
-  border-color: var(--primary);
-  background: rgba(99, 102, 241, 0.03);
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.04);
 }
 
 .file-item.active {
-  border-color: var(--primary);
-  background: rgba(99, 102, 241, 0.08);
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.05) 100%);
+}
+
+.file-item.active::before {
+  background: linear-gradient(180deg, #6366f1, #a855f7);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.7);
+}
+
+.file-item.active .file-item-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.file-item.active .file-item-idx {
+  color: #a855f7 !important;
+  font-weight: 700;
 }
 
 .file-item-name {
@@ -901,6 +927,7 @@ select:focus {
   text-overflow: ellipsis;
   max-width: 140px;
 }
+
 
 .status-dot {
   width: 6px;
@@ -1406,22 +1433,49 @@ select:focus {
 .instance-item {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.01);
+  padding: 8px 12px 8px 14px;
+  background: rgba(0, 0, 0, 0.015);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  transition: all 0.2s;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.instance-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3.5px;
+  background: transparent;
+  transition: all 0.25s ease;
 }
 
 .dark-theme .instance-item {
-  background: rgba(255, 255, 255, 0.01);
+  background: rgba(255, 255, 255, 0.015);
 }
 
-.instance-item:hover, .instance-item.active {
-  border-color: var(--primary);
-  background: rgba(99, 102, 241, 0.03);
+.instance-item:hover {
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.instance-item.active {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.16) 0%, rgba(139, 92, 246, 0.05) 100%);
+}
+
+.instance-item.active::before {
+  background: linear-gradient(180deg, #10b981, #6366f1);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.7);
+}
+
+.instance-item.active .instance-label span {
+  font-weight: 700;
 }
 
 .instance-label {
