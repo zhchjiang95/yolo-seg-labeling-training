@@ -502,6 +502,21 @@
           </button>
         </div>
 
+        <!-- 刚刚标注快速找回胶囊条 -->
+        <transition name="popover-fade">
+          <div v-if="lastSavedImage" class="recently-saved-banner" @click="goToLastSavedImage" title="点击立即返回刚刚保存的图片进行修改或检查">
+            <div class="recently-saved-content">
+              <span class="recently-saved-icon">✨</span>
+              <span class="recently-saved-text">
+                刚标注: <strong>{{ lastSavedImage.name }}</strong>
+              </span>
+            </div>
+            <button class="recently-saved-action" @click.stop="goToLastSavedImage">
+              返回修改 ›
+            </button>
+          </div>
+        </transition>
+
         <!-- 点击/拖拽上传 -->
         <div class="upload-area" @click="triggerUpload" @dragover.prevent @drop.prevent="handleFileDrop">
           <svg style="width: 20px; height: 20px; margin: 0 auto 6px; display: block;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -516,11 +531,13 @@
           <div v-if="filteredImageList.length === 0" style="text-align: center; color: var(--text-muted); font-size: 13px; margin-top: 20px;">
             暂无图片
           </div>
-          <div v-for="(img, idx) in filteredImageList" :key="img.name" class="file-item" :class="{ active: currentImage && currentImage.name === img.name }" @click="selectImage(img)">
+          <div v-for="(img, idx) in filteredImageList" :key="img.name" class="file-item" :class="{ active: currentImage && currentImage.name === img.name, 'recently-saved-item': lastSavedImage && lastSavedImage.name === img.name }" @click="selectImage(img)">
             <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; flex: 1;">
               <!-- 序号展示 -->
               <span class="file-item-idx" style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); flex-shrink: 0; min-width: 20px;">{{ idx + 1 }}</span>
-              <span class="file-item-name" :title="img.name" style="max-width: 135px;">{{ img.name }}</span>
+              <span class="file-item-name" :title="img.name" style="max-width: 120px;">{{ img.name }}</span>
+              <!-- 刚标注专属徽章 -->
+              <span v-if="lastSavedImage && lastSavedImage.name === img.name" class="recent-saved-tag" title="刚刚保存的图片">最新</span>
             </div>
             <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
               <!-- 显式区分文字 Badge -->
@@ -1482,6 +1499,7 @@ const searchQuery = ref('');
 const filterStatus = ref('unlabeled'); // labeled | unlabeled | negative
 const currentImage = ref(null);
 const activeTool = ref('edit'); // edit | draw | sam | pan | eraser
+const lastSavedImage = ref(null); // 记录最近一次保存的标注/负样本图片信息 { name, status, label_count }
 
 // 橡皮擦相关状态
 const eraserRadius = ref(20); // 橡皮擦半径，单位像素
@@ -1731,6 +1749,7 @@ const fetchClasses = async () => {
 // 监听当前数据集变化，重置分类选中并重载相关列表
 watch(currentDataset, async () => {
   activeClassIndex.value = 0; // 切换数据集时默认选中第一个分类标签
+  lastSavedImage.value = null; // 清空上一数据集的刚保存记录
   await fetchImageList();
   await fetchClasses();
   currentImage.value = null;
@@ -1747,13 +1766,17 @@ const currentImageSrc = computed(() => {
 
 // 筛选后的图片列表
 const filteredImageList = computed(() => {
-  let list = imageList.value;
+  let list = [...imageList.value];
   if (filterStatus.value === 'labeled') {
     list = list.filter(img => img.status === 'labeled');
+    // 已标注列表按最新标注保存时间倒序排列，最新标注的排在最前
+    list.sort((a, b) => (b.labeled_mtime || 0) - (a.labeled_mtime || 0));
   } else if (filterStatus.value === 'unlabeled') {
     list = list.filter(img => img.status === 'unlabeled');
   } else if (filterStatus.value === 'negative') {
     list = list.filter(img => img.status === 'negative');
+    // 负样本列表也按最新保存时间倒序排列
+    list.sort((a, b) => (b.labeled_mtime || 0) - (a.labeled_mtime || 0));
   }
   if (!searchQuery.value) return list;
   const q = searchQuery.value.toLowerCase();
@@ -2799,12 +2822,21 @@ const saveAnnotations = async () => {
     });
     
     if (res.ok) {
+      const resData = await res.json();
       const found = imageList.value.find(img => img.name === currentImage.value.name);
+      const nowTime = resData.labeled_mtime || Math.floor(Date.now() / 1000);
       if (found) {
         found.labeled = polygons.value.length > 0;
         found.label_count = polygons.value.length;
         found.status = polygons.value.length > 0 ? 'labeled' : 'unlabeled';
+        found.labeled_mtime = nowTime;
       }
+      // 记录最近一次保存的图片，用于快速定位与返回修改
+      lastSavedImage.value = {
+        name: currentImage.value.name,
+        status: polygons.value.length > 0 ? 'labeled' : 'unlabeled',
+        label_count: polygons.value.length
+      };
       showToast('标注数据已保存成功！', 'success');
       
       // 自动跳转到下一张
@@ -2855,6 +2887,15 @@ const saveAsNegative = async () => {
       const data = await res.json();
       showToast('已成功保存为负样本！', 'success');
       
+      // 记录最近一次保存的负样本
+      if (data.new_name) {
+        lastSavedImage.value = {
+          name: data.new_name,
+          status: 'negative',
+          label_count: 0
+        };
+      }
+      
       // 重新拉取图片列表
       await fetchImageList();
       await fetchSysInfo();
@@ -2881,6 +2922,27 @@ const saveAsNegative = async () => {
   } catch (err) {
     console.error('保存负样本出错:', err);
     showToast('保存异常，无法连接服务', 'error');
+  }
+};
+
+// 一键快速返回刚刚保存/标注的图片
+const goToLastSavedImage = async () => {
+  if (!lastSavedImage.value) return;
+  const targetName = lastSavedImage.value.name;
+  const targetStatus = lastSavedImage.value.status;
+  
+  // 自动切换对应的分类筛选 Tab，以便在列表中也能一眼看到
+  if (targetStatus && filterStatus.value !== targetStatus) {
+    filterStatus.value = targetStatus;
+  }
+  
+  const targetImg = imageList.value.find(img => img.name === targetName);
+  if (targetImg) {
+    await selectImage(targetImg);
+    setTool('edit'); // 切换到编辑模式，方便立即检查和修改
+    showToast(`已为您返回刚刚标注的【${targetName}】`, 'info');
+  } else {
+    showToast('未在列表中找到该图片，可能已被移除', 'warning');
   }
 };
 

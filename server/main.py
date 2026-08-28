@@ -604,7 +604,13 @@ def get_labeling_images(dataset: str = "default"):
             
             status = "unlabeled"
             label_count = 0
+            labeled_mtime = 0
             if label_path.exists():
+                try:
+                    labeled_mtime = int(label_path.stat().st_mtime)
+                except Exception:
+                    labeled_mtime = 0
+
                 if label_path.stat().st_size > 0:
                     try:
                         with open(label_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -623,7 +629,8 @@ def get_labeling_images(dataset: str = "default"):
                 "status": status,
                 "label_count": label_count,
                 "size_kb": round(item.stat().st_size / 1024, 1),
-                "mtime": int(item.stat().st_mtime)
+                "mtime": int(item.stat().st_mtime),
+                "labeled_mtime": labeled_mtime
             })
     # 按最后修改时间倒序排列
     result.sort(key=lambda x: x["mtime"], reverse=True)
@@ -743,7 +750,12 @@ def save_labeling_labels(req: SaveAnnotationRequest, dataset: str = "default"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"写入标签文件失败: {str(e)}")
         
-    return {"status": "success", "message": f"{req.name} 标注已保存"}
+    labeled_mtime = int(label_path.stat().st_mtime) if label_path.exists() else int(time.time())
+    return {
+        "status": "success",
+        "message": f"{req.name} 标注已保存",
+        "labeled_mtime": labeled_mtime
+    }
 
 # 5.1 保存为负样本并重命名
 @app.post("/api/labeling/save_negative")
@@ -814,7 +826,8 @@ def save_labeling_negative(req: SaveNegativeRequest, dataset: str = "default"):
     return {
         "status": "success",
         "message": f"已成功保存为负样本并重命名为 {new_img_name}",
-        "new_name": new_img_name
+        "new_name": new_img_name,
+        "labeled_mtime": int(new_label_path.stat().st_mtime) if new_label_path.exists() else int(time.time())
     }
 
 # 6. 获取和更新 Classes，并提供级联标签删除清洗
