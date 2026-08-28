@@ -2365,6 +2365,7 @@ const handleDetectAndRefine = async () => {
     const data = await res.json();
     if (!data.polygons || data.polygons.length === 0) {
       showToast('未检测到任何目标实例', 'warning');
+      setTool('edit'); // 识别完成默认切换到编辑模式
       return;
     }
     
@@ -2394,6 +2395,7 @@ const handleDetectAndRefine = async () => {
         activePolyIndex.value = null;
         const targetClassName = classes.value[currentTargetClass] || `类别#${currentTargetClass + 1}`;
         showToast(`✨ 识别并 SAM 优化成功！共生成 ${refineData.polygons.length} 个高清实例，已应用【${targetClassName}】标签。`, 'success');
+        setTool('edit'); // 识别并优化完成后默认切换到编辑模式，便于检查和调整
         return;
       }
     }
@@ -2402,6 +2404,7 @@ const handleDetectAndRefine = async () => {
     polygons.value = rawPolygons;
     activePolyIndex.value = null;
     showToast(`模型检测成功（已生成 ${rawPolygons.length} 个实例），SAM 优化已跳过。`, 'info');
+    setTool('edit'); // 默认切换到编辑模式，便于检查和调整
   } catch (err) {
     console.error('识别并优化出错:', err);
     showToast('连接识别或 SAM 服务异常', 'error');
@@ -2439,6 +2442,7 @@ const autoDetect = async (modelPath = null) => {
         const targetClassName = classes.value[currentTargetClass] || `类别#${currentTargetClass + 1}`;
         showToast(`自动识别成功！共检测到 ${data.polygons.length} 个实例，已应用当前选中的【${targetClassName}】标签。`, 'success');
       }
+      setTool('edit'); // 模型识别完成后默认切换到编辑模式，便于检查和调整
     } else {
       const err = await res.json();
       showToast('自动检测失败: ' + (err.detail || '模型加载出错'), 'error');
@@ -2492,6 +2496,7 @@ const promptDetect = async () => {
       } else {
         showToast(`未识别到符合提示词 "${query}" 的目标物体`, 'warning');
       }
+      setTool('edit'); // Prompt 识别完成后默认切换到编辑模式，便于检查和调整
     } else {
       const err = await res.json();
       showToast('Prompt 识别失败: ' + (err.detail || '接口异常'), 'error');
