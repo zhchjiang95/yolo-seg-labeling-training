@@ -819,7 +819,7 @@
         <!-- 标注操作提示语 -->
         <div v-if="currentImage" style="background: rgba(99,102,241,0.06); padding: 8px 12px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; border-left: 3px solid var(--primary);">
           <span v-if="activeTool === 'edit'">💡 <strong>编辑模式</strong>: 点击多边形选中，拖动顶点微调；拖动边线上的<strong>半透明中点</strong>可直接插入新顶点；双击顶点删除点；<strong>按住 Alt 键拖动鼠标可直接涂抹擦除顶点</strong>；Delete 键删除选中多边形。</span>
-          <span v-else-if="activeTool === 'draw'">✏️ <strong>手动打点</strong>: 鼠标左键在目标边缘点击，绘制多边形轮廓。双击，或再次点击<strong>第一个点</strong>可闭合多边形完成创建。Esc 取消。</span>
+          <span v-else-if="activeTool === 'draw'">✏️ <strong>手动打点</strong>: 鼠标左键在目标边缘点击，绘制多边形轮廓。可按 <strong>Ctrl+Z</strong> 撤销上一个点。双击，或再次点击<strong>第一个点</strong>可闭合多边形完成创建。Esc 取消。</span>
           <span v-else-if="activeTool === 'sam'">🔮 <strong>SAM智能辅助</strong>: 鼠标<strong>左键</strong>点击目标区域生成绿点(指明前景)，<strong>右键</strong>点击背景生成红点(排除背景)。实时生成紫色预览虚线，满意后按 <strong>Enter 键</strong> 确认转化为多边形，Esc 撤销。</span>
           <span v-else-if="activeTool === 'eraser'">🧽 <strong>橡皮擦模式</strong>: 按住鼠标左键并在要擦除的顶点区域内拖动涂抹，即可快速成批清除顶点。使用 <strong>[</strong> 和 <strong>]</strong> 键或滑块可调节擦除半径。</span>
           <span v-else-if="activeTool === 'pan'">🤚 <strong>手形拖拽</strong>: 按住鼠标左键并移动可以自由平移画布。在任何模式下，<strong>滚动鼠标滚轮</strong>均可缩放画布，<strong>按住空格键</strong>或使用<strong>鼠标右键拖动</strong>也可以随时平移。</span>
@@ -1190,6 +1190,7 @@
           <!-- 键盘快捷键引导 -->
           <div style="font-size: 11px; color: var(--text-muted); line-height: 1.5;">
             <div>⌨️ <strong>快捷键引导：</strong></div>
+            <div>• <kbd>Ctrl+Z</kbd> : 手动标注未闭合时逐点撤销</div>
             <div>• <kbd>Ctrl+R</kbd> : 编辑模式使用 SAM 重新优化选中实例边缘</div>
             <div>• <kbd>Enter</kbd> : 闭合手动连线 / 确认SAM生成</div>
             <div>• <kbd>Esc</kbd> : 取消手动连线 / 撤销SAM的点击点</div>
@@ -2025,6 +2026,19 @@ const finishDrawing = () => {
     });
   }
   activePolygonPoints.value = [];
+};
+
+// 手动打点模式下撤销未闭合多边形的最新顶点（逐点撤销直至清空）
+const undoLastDrawPoint = () => {
+  if (activeTool.value !== 'draw') return;
+  if (!activePolygonPoints.value || activePolygonPoints.value.length === 0) return;
+
+  activePolygonPoints.value.pop();
+
+  // 如果撤销至最后一个点导致点集清空，同步重置鼠标辅助线坐标
+  if (activePolygonPoints.value.length === 0) {
+    mousePos.value = null;
+  }
 };
 
 // ==========================================
@@ -2920,6 +2934,12 @@ const handleKeyDown = (e) => {
     if (!isInput && activeTool.value === 'edit' && activePolyIndex.value !== null) {
       e.preventDefault();
       refineSinglePolygon(activePolyIndex.value);
+    }
+  } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+    // 手动标注模式下未闭合实例逐点撤销（闭合后 activePolygonPoints 已清空，天然不可撤销）
+    if (!isInput && activeTool.value === 'draw' && activePolygonPoints.value.length > 0) {
+      e.preventDefault();
+      undoLastDrawPoint();
     }
   }
 };
