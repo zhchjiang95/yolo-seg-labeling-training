@@ -844,12 +844,87 @@
 
         <!-- 画布核心工作区 -->
         <div class="canvas-workspace" :class="{ 'draw-mode': activeTool === 'draw', 'panning': activeTool === 'pan' || spacePressed || rightMouseDown }" @wheel.prevent="handleZoom" @mousedown="startPan" @contextmenu.prevent>
+          <!-- 画布顶部居中融合控制 Bar (精简旋转控制 + 选中实例 SAM 优化控制) -->
+          <transition name="popover-fade">
+            <div v-if="currentImage" class="top-floating-control-bar" @mousedown.stop @click.stop>
+              <!-- 1. 左侧：仅保留向左/向右视角旋转按钮 -->
+              <div class="bar-group">
+                <button class="bar-btn" @click="rotateCanvas(-90)" title="逆时针旋转 90 度">
+                  <svg style="width: 13px; height: 13px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                    <path d="M3 3v5h5"/>
+                  </svg>
+                </button>
+                <button class="bar-btn" @click="rotateCanvas(90)" title="顺时针旋转 90 度 (快捷键 Alt+R)">
+                  <svg style="width: 13px; height: 13px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                    <path d="M21 3v5h-5"/>
+                  </svg>
+                </button>
+              </div>
+
+              <!-- 2. 当存在选中实例或全图有多边形时展示右侧控制组 -->
+              <template v-if="(activePolyIndex !== null && polygons[activePolyIndex]) || polygons.length > 0">
+                <!-- 中间竖线分隔符 -->
+                <div class="bar-divider"></div>
+
+                <!-- 右侧：选中实例操作与 SAM 优化控制组 -->
+                <div class="bar-group">
+                  <!-- 选中单实例时展现编号与单项 SAM 优化 -->
+                  <template v-if="activePolyIndex !== null && polygons[activePolyIndex]">
+                    <span class="selected-badge" :style="{ background: getPolyColor(polygons[activePolyIndex].class_id) + '25', color: getPolyColor(polygons[activePolyIndex].class_id), borderColor: getPolyColor(polygons[activePolyIndex].class_id) }">
+                      <span class="badge-dot" :style="{ background: getPolyColor(polygons[activePolyIndex].class_id) }"></span>
+                      #{{ activePolyIndex + 1 }} {{ classes[polygons[activePolyIndex].class_id] || '实例' }}
+                    </span>
+
+                    <button 
+                      class="bar-btn" 
+                      :disabled="isRefiningSingleIndex === activePolyIndex || isRefiningAll"
+                      @click="refineSinglePolygon(activePolyIndex)"
+                      title="使用 SAM 重新高精贴合此实例边缘 (快捷键 Ctrl+R)"
+                    >
+                      <span v-if="isRefiningSingleIndex === activePolyIndex" class="spinner" style="width: 10px; height: 10px; margin-right: 3px;"></span>
+                      <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
+                      <span>{{ isRefiningSingleIndex === activePolyIndex ? '优化中...' : 'SAM优化' }}</span>
+                    </button>
+                  </template>
+
+                  <!-- 只要全图有多边形，默认展示 SAM 优化全部 -->
+                  <button 
+                    v-if="polygons.length > 0"
+                    class="bar-btn" 
+                    :disabled="isRefiningAll || isRefiningSingleIndex !== null"
+                    @click="refineAllPolygons"
+                    :title="`使用 SAM 批量重新优化全图所有 ${polygons.length} 个实例边缘`"
+                  >
+                    <span v-if="isRefiningAll" class="spinner" style="width: 10px; height: 10px; margin-right: 3px;"></span>
+                    <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
+                    <span>{{ isRefiningAll ? '批量优化中...' : 'SAM优化全部' }}</span>
+                  </button>
+
+                  <!-- 选中单实例时展示删除按钮 -->
+                  <button 
+                    v-if="activePolyIndex !== null && polygons[activePolyIndex]"
+                    class="bar-btn danger-btn"
+                    @click="deletePolygon(activePolyIndex)"
+                    title="删除此实例 (Delete / Backspace)"
+                  >
+                    <svg style="width: 12px; height: 12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                    </svg>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </transition>
+
           <div v-if="!currentImage" style="color: var(--text-muted); text-align: center; font-size: 14px; margin-top: 10%;">
             请在左侧列表中选择一张图片开始标注
           </div>
           
-          <!-- 图片与 SVG 渲染包裹器，绑定平移和缩放 -->
-          <div v-else class="canvas-container" :style="{ transform: `translate(${panX}px, ${panY}px) scale(${zoom})` }">
+          <!-- 图片与 SVG 渲染包裹器，绑定平移、缩放与视角旋转 -->
+          <div v-else class="canvas-container" :style="{ transform: `translate(${panX}px, ${panY}px) scale(${zoom}) rotate(${rotationAngle}deg)` }">
             <img :src="currentImageSrc" class="canvas-img" @load="onImageLoad" />
             
             <!-- SVG 多边形编辑渲染图层，像素级 viewBox 同步 -->
@@ -1026,66 +1101,6 @@
                 </text>
               </g>
             </svg>
-
-            <!-- 7. 编辑模式下：选中的多边形实例上方悬浮操作条 (Floating Bubble Action Bar) -->
-            <transition name="popover-fade">
-              <div 
-                v-if="activeTool === 'edit' && activePolyIndex !== null && polygons[activePolyIndex] && !polygons[activePolyIndex].hidden && activePolyFloatingPos"
-                class="instance-floating-bar"
-                :style="{
-                  left: `${activePolyFloatingPos.x}px`,
-                  top: `${activePolyFloatingPos.y}px`,
-                  transform: `translate(-50%, -100%) scale(${1 / zoom})`
-                }"
-                @mousedown.stop
-                @click.stop
-              >
-                <div class="floating-bar-content">
-                  <!-- 1. 纯数字序号徽章 (不显示冗长类别名) -->
-                  <span class="floating-bar-title" :style="{ color: getPolyColor(polygons[activePolyIndex].class_id) }">
-                    #{{ activePolyIndex + 1 }}
-                  </span>
-
-                  <!-- 2. 当前选中实例 SAM 优化按钮 (仅保留星星图标) -->
-                  <button 
-                    class="floating-refine-btn" 
-                    :disabled="isRefiningSingleIndex === activePolyIndex || isRefiningAll"
-                    @click="refineSinglePolygon(activePolyIndex)"
-                    title="使用 SAM 重新高精贴合此实例边缘 (快捷键 Ctrl+R)"
-                  >
-                    <span v-if="isRefiningSingleIndex === activePolyIndex" class="spinner" style="width: 10px; height: 10px; margin-right: 3px;"></span>
-                    <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
-                    <span>{{ isRefiningSingleIndex === activePolyIndex ? '优化中...' : 'SAM优化' }}</span>
-                  </button>
-
-                  <!-- 3. 全图所有实例 SAM 优化全部按钮 (仅保留星星图标) -->
-                  <button 
-                    class="floating-refine-btn all-btn" 
-                    :disabled="isRefiningAll || isRefiningSingleIndex !== null || polygons.length === 0"
-                    @click="refineAllPolygons"
-                    :title="`使用 SAM 批量重新优化全图所有 ${polygons.length} 个实例边缘`"
-                  >
-                    <span v-if="isRefiningAll" class="spinner" style="width: 10px; height: 10px; margin-right: 3px;"></span>
-                    <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
-                    <span>{{ isRefiningAll ? '批量优化中...' : 'SAM优化全部' }}</span>
-                  </button>
-
-                  <!-- 4. 实例删除快捷按钮 -->
-                  <button 
-                    class="floating-delete-btn"
-                    @click="deletePolygon(activePolyIndex)"
-                    title="删除此实例 (Delete / Backspace)"
-                  >
-                    <svg style="width: 12px; height: 12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="3 6 5 6 21 6"/>
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
-                    </svg>
-                  </button>
-                </div>
-                <div class="floating-bar-arrow"></div>
-              </div>
-            </transition>
-
           </div>
 
           <!-- 缩放指示器 -->
@@ -1501,6 +1516,66 @@ const currentImage = ref(null);
 const activeTool = ref('edit'); // edit | draw | sam | pan | eraser
 const lastSavedImage = ref(null); // 记录最近一次保存的标注/负样本图片信息 { name, status, label_count }
 const initialPolygonsSnapshot = ref('[]'); // 加载图片或保存成功时的多边形快照 JSON 字符串
+const rotationAngle = ref(0); // 画布视角旋转角度（0, 90, 180, 270...）
+
+// 重置/居中画布视野，自适应当前旋转角度 (基准 transform-origin: 0 0)
+const resetCanvasViewport = () => {
+  const workspace = document.querySelector('.canvas-workspace');
+  if (!workspace || !imgNaturalWidth.value || !imgNaturalHeight.value) return;
+
+  const pad = 32; // 安全边距
+  const containerW = Math.max(100, workspace.clientWidth - pad);
+  const containerH = Math.max(100, workspace.clientHeight - pad);
+
+  const imgW = imgNaturalWidth.value;
+  const imgH = imgNaturalHeight.value;
+
+  const angle = rotationAngle.value % 360;
+  const isRotated90 = (angle / 90) % 2 !== 0;
+  const visualW = isRotated90 ? imgH : imgW;
+  const visualH = isRotated90 ? imgW : imgH;
+
+  const scaleX = containerW / visualW;
+  const scaleY = containerH / visualH;
+  let bestScale = Math.min(scaleX, scaleY);
+  bestScale = Math.max(0.05, Math.min(1.5, bestScale));
+
+  zoom.value = bestScale;
+
+  const fullW = workspace.clientWidth;
+  const fullH = workspace.clientHeight;
+
+  // 根据旋转角度，在 transform-origin: 0 0 基准下计算完美居中平移量
+  if (angle === 0) {
+    panX.value = (fullW - imgW * bestScale) / 2;
+    panY.value = (fullH - imgH * bestScale) / 2;
+  } else if (angle === 90) {
+    panX.value = (fullW + imgH * bestScale) / 2;
+    panY.value = (fullH - imgW * bestScale) / 2;
+  } else if (angle === 180) {
+    panX.value = (fullW + imgW * bestScale) / 2;
+    panY.value = (fullH + imgH * bestScale) / 2;
+  } else if (angle === 270) {
+    panX.value = (fullW - imgH * bestScale) / 2;
+    panY.value = (fullH + imgW * bestScale) / 2;
+  }
+};
+
+// 旋转画布角度并自动重置视野自适应居中
+const rotateCanvas = (deg) => {
+  rotationAngle.value = (rotationAngle.value + deg) % 360;
+  if (rotationAngle.value < 0) {
+    rotationAngle.value += 360;
+  }
+  nextTick(() => {
+    resetCanvasViewport();
+  });
+};
+
+// 重置旋转视角
+const resetRotation = () => {
+  rotationAngle.value = 0;
+};
 
 // 精准判定当前是否存在未保存的标注变动
 const hasUnsavedChanges = computed(() => {
@@ -1847,6 +1922,7 @@ const selectImage = async (img, force = false) => {
   activePolygonPoints.value = [];
   samPrompts.value = [];
   samPreviewPolygon.value = null;
+  resetRotation(); // 加载新图片时自动重置旋转角度为 0°
   
   try {
     const res = await fetch(`${API_BASE}/api/labeling/labels/${img.name}?dataset=${currentDataset.value}`);
@@ -1866,37 +1942,11 @@ const selectImage = async (img, force = false) => {
   }
 };
 
-// 图像加载完成获取实际分辨率，并自适应容器宽高进行缩放和居中
+// 图像加载完成获取实际分辨率，并重置画布视角进行居中自适应
 const onImageLoad = (e) => {
-  const imgW = e.target.naturalWidth || 800;
-  const imgH = e.target.naturalHeight || 600;
-  imgNaturalWidth.value = imgW;
-  imgNaturalHeight.value = imgH;
-  
-  const workspace = document.querySelector('.canvas-workspace');
-  if (workspace) {
-    // 留出 16 像素的安全边距
-    const pad = 16;
-    const containerW = Math.max(100, workspace.clientWidth - pad * 2);
-    const containerH = Math.max(100, workspace.clientHeight - pad * 2);
-    
-    // 计算缩放比，使图片完整包容在容器内
-    const scaleX = containerW / imgW;
-    const scaleY = containerH / imgH;
-    let bestScale = Math.min(scaleX, scaleY);
-    
-    // 限制缩放区间：最小 5%，最大 150%（不强行把超小图拉得太大）
-    bestScale = Math.max(0.05, Math.min(1.5, bestScale));
-    zoom.value = bestScale;
-    
-    // 计算居中对齐时的平移位置（由于 .canvas-container 已被 left:0; top:0; 绝对定位化）
-    panX.value = (workspace.clientWidth - imgW * bestScale) / 2;
-    panY.value = (workspace.clientHeight - imgH * bestScale) / 2;
-  } else {
-    zoom.value = 1.0;
-    panX.value = 0;
-    panY.value = 0;
-  }
+  imgNaturalWidth.value = e.target.naturalWidth || 800;
+  imgNaturalHeight.value = e.target.naturalHeight || 600;
+  resetCanvasViewport();
 };
 
 
@@ -1980,16 +2030,26 @@ const stopPan = (e) => {
 };
 
 // ==========================================
-// 4. SVG 画布坐标转换与标注绘制交互
+// 4. SVG 画布坐标转换与标注绘制交互 (基于 CTM 逆矩阵转换解算)
 // ==========================================
 
 const getSVGCoords = (e) => {
   const svg = document.querySelector('.svg-overlay');
   if (!svg) return [0, 0];
-  const rect = svg.getBoundingClientRect();
-  const x = ((e.clientX - rect.left) / rect.width) * imgNaturalWidth.value;
-  const y = ((e.clientY - rect.top) / rect.height) * imgNaturalHeight.value;
-  return [x, y];
+  try {
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return [0, 0];
+    const svgPt = pt.matrixTransform(ctm.inverse());
+    return [svgPt.x, svgPt.y];
+  } catch (err) {
+    const rect = svg.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * imgNaturalWidth.value;
+    const y = ((e.clientY - rect.top) / rect.height) * imgNaturalHeight.value;
+    return [x, y];
+  }
 };
 
 const handleSVGMouseDown = (e) => {
@@ -3073,6 +3133,11 @@ const handleKeyDown = (e) => {
     if (!isInput && activeTool.value === 'edit' && activePolyIndex.value !== null) {
       e.preventDefault();
       refineSinglePolygon(activePolyIndex.value);
+    }
+  } else if (e.altKey && (e.key === 'r' || e.key === 'R')) {
+    if (!isInput) {
+      e.preventDefault();
+      rotateCanvas(90);
     }
   } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
     // 手动标注模式下未闭合实例逐点撤销（闭合后 activePolygonPoints 已清空，天然不可撤销）
