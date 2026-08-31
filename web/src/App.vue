@@ -74,13 +74,13 @@
     <!-- TAB 导航与数据集选择栏 -->
     <div class="tabs-container">
       <div class="nav-tabs">
-        <div class="tab-item" :class="{ active: currentTab === 'train' }" @click="currentTab = 'train'">
+        <div class="tab-item" :class="{ active: currentTab === 'train' }" @click="switchTab('train')">
           <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
           </svg>
           模型训练
         </div>
-        <div class="tab-item" :class="{ active: currentTab === 'label' }" @click="currentTab = 'label'">
+        <div class="tab-item" :class="{ active: currentTab === 'label' }" @click="switchTab('label')">
           <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
           </svg>
@@ -96,7 +96,7 @@
           </svg>
           数据集：
         </label>
-        <select v-model="currentDataset" class="dataset-select">
+        <select :value="currentDataset" @change="handleDatasetChange" class="dataset-select">
           <option v-for="ds in datasets" :key="ds" :value="ds">{{ ds }}</option>
         </select>
 
@@ -1500,6 +1500,23 @@ const filterStatus = ref('unlabeled'); // labeled | unlabeled | negative
 const currentImage = ref(null);
 const activeTool = ref('edit'); // edit | draw | sam | pan | eraser
 const lastSavedImage = ref(null); // 记录最近一次保存的标注/负样本图片信息 { name, status, label_count }
+const initialPolygonsSnapshot = ref('[]'); // 加载图片或保存成功时的多边形快照 JSON 字符串
+
+// 精准判定当前是否存在未保存的标注变动
+const hasUnsavedChanges = computed(() => {
+  if (currentTab.value !== 'label' || !currentImage.value) return false;
+  
+  // 1. 存在未闭合的手动打点
+  if (activePolygonPoints.value.length > 0) return true;
+  
+  // 2. 存在未确认的 SAM 预测打点或轮廓预览
+  if (samPrompts.value.length > 0 || samPreviewPolygon.value !== null) return true;
+  
+  // 3. 多边形列表发生过未保存的变动 (新增/删除/改分类/拖拽顶点微调等)
+  if (JSON.stringify(polygons.value) !== initialPolygonsSnapshot.value) return true;
+  
+  return false;
+});
 
 // 橡皮擦相关状态
 const eraserRadius = ref(20); // 橡皮擦半径，单位像素
@@ -1812,7 +1829,18 @@ const fetchModelsList = async () => {
 
 
 // 选定并加载某张图片的数据
-const selectImage = async (img) => {
+const selectImage = async (img, force = false) => {
+  if (!img) return;
+
+  // 若选择的就是当前已加载的图片，直接忽略
+  if (currentImage.value && currentImage.value.name === img.name) return;
+
+  // 拦截提示：若非强制且存在未保存的修改，弹窗二次确认
+  if (!force && currentImage.value && hasUnsavedChanges.value) {
+    const confirmed = confirm(`⚠️ 当前图片【${currentImage.value.name}】存在未保存的标注修改！\n\n切换到新图片将丢弃未保存的变更，是否确认继续？`);
+    if (!confirmed) return false;
+  }
+
   currentImage.value = img;
   polygons.value = [];
   activePolyIndex.value = null;
@@ -1832,6 +1860,9 @@ const selectImage = async (img) => {
     }
   } catch (err) {
     console.error('加载标注失败:', err);
+  } finally {
+    // 记载/加载成功后更新初始标注快照
+    initialPolygonsSnapshot.value = JSON.stringify(polygons.value || []);
   }
 };
 
@@ -2831,6 +2862,10 @@ const saveAnnotations = async () => {
         found.status = polygons.value.length > 0 ? 'labeled' : 'unlabeled';
         found.labeled_mtime = nowTime;
       }
+      
+      // 更新初始快照为最新保存的状态
+      initialPolygonsSnapshot.value = JSON.stringify(polygons.value || []);
+
       // 记录最近一次保存的图片，用于快速定位与返回修改
       lastSavedImage.value = {
         name: currentImage.value.name,
@@ -2841,11 +2876,12 @@ const saveAnnotations = async () => {
       
       // 自动跳转到下一张
       if (nextImg) {
-        await selectImage(nextImg);
+        await selectImage(nextImg, true);
       } else {
         currentImage.value = null;
         polygons.value = [];
         activePolyIndex.value = null;
+        initialPolygonsSnapshot.value = '[]';
       }
     } else {
       showToast('保存标注失败', 'error');
@@ -2887,6 +2923,9 @@ const saveAsNegative = async () => {
       const data = await res.json();
       showToast('已成功保存为负样本！', 'success');
       
+      // 更新快照为负样本状态 (空数组)
+      initialPolygonsSnapshot.value = '[]';
+
       // 记录最近一次保存的负样本
       if (data.new_name) {
         lastSavedImage.value = {
@@ -2904,7 +2943,7 @@ const saveAsNegative = async () => {
       if (nextImg) {
         const foundNext = imageList.value.find(img => img.name === nextImg.name);
         if (foundNext) {
-          await selectImage(foundNext);
+          await selectImage(foundNext, true);
         } else {
           currentImage.value = null;
           polygons.value = [];
@@ -2943,6 +2982,39 @@ const goToLastSavedImage = async () => {
     showToast(`已为您返回刚刚标注的【${targetName}】`, 'info');
   } else {
     showToast('未在列表中找到该图片，可能已被移除', 'warning');
+  }
+};
+
+// 阻断导航 Tab 切换
+const switchTab = (tab) => {
+  if (currentTab.value === tab) return;
+  if (currentTab.value === 'label' && tab !== 'label' && hasUnsavedChanges.value) {
+    const confirmed = confirm(`⚠️ 当前存在未保存的标注变动！\n\n离开“数据标注”将丢失未保存的修改，是否确认离开？`);
+    if (!confirmed) return;
+  }
+  currentTab.value = tab;
+};
+
+// 阻断数据集下拉选择切换
+const handleDatasetChange = async (e) => {
+  const newDataset = e.target.value;
+  if (newDataset === currentDataset.value) return;
+  if (hasUnsavedChanges.value) {
+    const confirmed = confirm(`⚠️ 当前数据集下存在未保存的标注变动！\n\n切换数据集将丢失未保存的修改，是否确认切换数据集？`);
+    if (!confirmed) {
+      e.target.value = currentDataset.value; // 还原下拉选中值
+      return;
+    }
+  }
+  currentDataset.value = newDataset;
+};
+
+// 浏览器关闭/刷新/历史后退拦截
+const handleBeforeUnload = (e) => {
+  if (hasUnsavedChanges.value) {
+    e.preventDefault();
+    e.returnValue = ''; // 触发浏览器原生防离开确认框
+    return '';
   }
 };
 
@@ -3096,6 +3168,7 @@ onMounted(async () => {
   
   window.addEventListener('click', closePromptPopoverOnOutside);
   window.addEventListener('click', closeModelPopoverOnOutside);
+  window.addEventListener('beforeunload', handleBeforeUnload);
   if (currentTab.value === 'label') {
     fetchImageList();
     fetchModelsList();
@@ -3113,6 +3186,7 @@ onUnmounted(() => {
   
   window.removeEventListener('click', closePromptPopoverOnOutside);
   window.removeEventListener('click', closeModelPopoverOnOutside);
+  window.removeEventListener('beforeunload', handleBeforeUnload);
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
   window.removeEventListener('mousemove', handleMouseMoveGlobal);
