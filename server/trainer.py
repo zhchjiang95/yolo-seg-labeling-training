@@ -192,10 +192,35 @@ class YOLOTrainer:
             except Exception as e:
                 self._write_log(f"[SYSTEM] 写入 train_meta.json 失败: {str(e)}\n")
 
-            # 2. 动态生成临时 YOLO 训练运行 Python 脚本
-            # 这样做可以避免多平台 CLI 参数传参乱码，且能独立设置 stdout 编码
-            model_path = self.workspace_dir / "models" / "yolo26s-seg.pt"
+            # 2. 查找基础模型权重（优先检索 models/segment/，其次检索 models/ 根目录）
+            model_path = None
+            candidate_paths = [
+                self.workspace_dir / "models" / "segment" / "yolo26s-seg.pt",
+                self.workspace_dir / "models" / "yolo26s-seg.pt"
+            ]
             
+            # 支持通过 config 传入指定权重路径（若未指定则使用默认候选路径）
+            custom_model = config.get("model_path")
+            if custom_model:
+                custom_p = Path(custom_model)
+                if not custom_p.is_absolute():
+                    custom_p = self.workspace_dir / custom_p
+                candidate_paths.insert(0, custom_p)
+
+            for p in candidate_paths:
+                if p.exists() and p.is_file():
+                    model_path = p
+                    break
+
+            if model_path is None:
+                # 若两处均不存在，默认指定 models/segment/ 路径并输出警告日志
+                model_path = self.workspace_dir / "models" / "segment" / "yolo26s-seg.pt"
+                self._write_log(f"[WARNING] 未在 models/segment/ 或 models/ 目录下检测到本地 yolo26s-seg.pt 权重，Ultralytics 可能会尝试从远程下载！\n")
+            else:
+                self._write_log(f"[SYSTEM] 成功加载本地基础分割模型: {model_path.relative_to(self.workspace_dir).as_posix()}\n")
+            
+            # 动态生成临时 YOLO 训练运行 Python 脚本
+            # 这样做可以避免多平台 CLI 参数传参乱码，且能独立设置 stdout 编码
             run_script_content = f"""# -*- coding: utf-8 -*-
 import sys
 from ultralytics import YOLO
@@ -205,7 +230,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 def main():
-    print("[RUNNER] 正在加载 YOLO26s-seg 模型...", flush=True)
+    print("[RUNNER] 正在加载 YOLO26s-seg 模型: {model_path.name}...", flush=True)
     model = YOLO(r"{model_path.resolve().as_posix()}")
     
     print("[RUNNER] 开始拉起训练循环...", flush=True)
