@@ -710,18 +710,19 @@
               <button 
                 class="tool-btn" 
                 :class="{ active: showPromptPopover }"
-                :disabled="!currentImage" 
+                :disabled="!currentImage || isPromptDetecting || isPromptDetectAndRefining" 
                 style="border-color: rgba(99, 102, 241, 0.4); color: var(--primary); background: rgba(99, 102, 241, 0.08); font-weight: 600;" 
                 @click.stop="togglePromptPopover"
                 title="点击展开 Prompt 开放词汇智能识别"
               >
-                <svg style="width: 14px; height: 14px; color: var(--primary); margin-right: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <span v-if="isPromptDetecting || isPromptDetectAndRefining" class="spinner" style="margin-right: 4px;"></span>
+                <svg v-else style="width: 14px; height: 14px; color: var(--primary); margin-right: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
                 <span>✨ Prompt 识别</span>
               </button>
 
-              <!-- 悬浮在按钮上方的 Popover 弹窗 -->
+              <!-- 悬浮在按钮下方的 Popover 弹窗 -->
               <transition name="popover-fade">
                 <div v-if="showPromptPopover" class="prompt-popover-panel" @click.stop>
                   <div class="prompt-popover-header">
@@ -732,17 +733,29 @@
                   </div>
 
                   <div class="prompt-popover-body">
-                    <div style="margin-bottom: 8px;">
+                    <!-- 1. 选择世界模型 -->
+                    <div style="margin-bottom: 10px;">
+                      <label style="font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; display: block;">选择世界模型：</label>
+                      <select v-model="selectedWorldModelPath" class="model-popover-select" style="width: 100%;">
+                        <option v-for="model in worldModelsList" :key="model.path" :value="model.path">
+                          {{ model.name }} ({{ model.type === 'extra' ? '外部目录' : (model.type === 'custom' ? '本地权重' : '默认模型') }})
+                        </option>
+                      </select>
+                    </div>
+
+                    <!-- 2. 提示词输入 -->
+                    <div style="margin-bottom: 10px;">
                       <label style="font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; display: block;">提示词 (支持逗号分隔多个词汇)：</label>
                       <input 
                         type="text" 
                         v-model="promptText" 
                         placeholder="如 pig, person..." 
                         class="prompt-popover-input"
-                        @keyup.enter="promptDetect"
+                        @keyup.enter="handlePromptDetectAndRefine"
                       />
                     </div>
 
+                    <!-- 3. 置信度阈值 -->
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px;">
                       <label style="font-size: 11px; color: var(--text-secondary); white-space: nowrap;">置信度阈值 (Conf):</label>
                       <input 
@@ -756,14 +769,29 @@
                       />
                     </div>
 
-                    <button 
-                      class="prompt-popover-submit-btn" 
-                      :disabled="!currentImage || isPromptDetecting || !promptText.trim()" 
-                      @click="promptDetect"
-                    >
-                      <span v-if="isPromptDetecting" class="spinner" style="margin-right: 6px;"></span>
-                      {{ isPromptDetecting ? '正在识别全图目标...' : '开始识别' }}
-                    </button>
+                    <!-- 4. 双动作按钮组：全图识别 (无优化) & 识别并SAM优化 -->
+                    <div style="display: flex; gap: 8px;">
+                      <button 
+                        class="model-popover-detect-btn" 
+                        :disabled="!currentImage || isPromptDetecting || isPromptDetectAndRefining || !promptText.trim()" 
+                        @click="handlePromptDetectOnly"
+                        title="仅使用选中的世界模型进行快速边界框识别 (不调用 SAM 优化)"
+                      >
+                        <span v-if="isPromptDetecting" class="spinner" style="margin-right: 4px;"></span>
+                        <span>{{ isPromptDetecting ? '识别中...' : '全图识别' }}</span>
+                      </button>
+
+                      <button 
+                        class="model-popover-refine-btn" 
+                        :disabled="!currentImage || isPromptDetecting || isPromptDetectAndRefining || !promptText.trim()" 
+                        @click="handlePromptDetectAndRefine"
+                        title="使用选中的世界模型检测出目标后，立即通过 SAM 自动生成精细贴合的高清边缘轮廓"
+                      >
+                        <span v-if="isPromptDetectAndRefining" class="spinner" style="margin-right: 4px;"></span>
+                        <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
+                        <span>{{ isPromptDetectAndRefining ? '识别并优化中...' : '识别并SAM优化' }}</span>
+                      </button>
+                    </div>
                   </div>
                   <div class="popover-arrow"></div>
                 </div>
@@ -1688,15 +1716,20 @@ const activePolyFloatingPos = computed(() => {
 
 // Prompt 开放词汇识别
 const promptText = ref('pig');
-
 const promptConf = ref(0.01); // 默认 0.01 置信度，最大化捕获全图目标
-const isPromptDetecting = ref(false);
+const isPromptDetecting = ref(false); // 是否处于“全图识别”执行中
+const isPromptDetectAndRefining = ref(false); // 是否处于“识别并SAM优化”执行中
 const showPromptPopover = ref(false);
+const worldModelsList = ref([]); // 后端扫描出的世界/开放词汇模型列表
+const selectedWorldModelPath = ref(''); // 当前选中的世界模型路径
 
 const togglePromptPopover = () => {
   showPromptPopover.value = !showPromptPopover.value;
   if (showPromptPopover.value) {
     showModelPopover.value = false;
+    if (!selectedWorldModelPath.value && worldModelsList.value.length > 0) {
+      selectedWorldModelPath.value = worldModelsList.value[0].path;
+    }
   }
 };
 
@@ -1899,6 +1932,21 @@ const fetchModelsList = async () => {
     }
   } catch (err) {
     console.error('获取权重列表失败:', err);
+  }
+};
+
+// 获取可用世界/开放词汇模型列表
+const fetchWorldModelsList = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/world_models`);
+    if (res.ok) {
+      worldModelsList.value = await res.json();
+      if (worldModelsList.value.length > 0 && !selectedWorldModelPath.value) {
+        selectedWorldModelPath.value = worldModelsList.value[0].path;
+      }
+    }
+  } catch (err) {
+    console.error('获取世界模型列表失败:', err);
   }
 };
 
@@ -2570,7 +2618,19 @@ const autoDetect = async (modelPath = null) => {
 };
 
 
-const promptDetect = async () => {
+// 仅世界模型全图识别 (不使用 SAM 优化)
+const handlePromptDetectOnly = async () => {
+  showPromptPopover.value = false;
+  await promptDetect(false);
+};
+
+// 世界模型识别并自动使用 SAM 优化
+const handlePromptDetectAndRefine = async () => {
+  showPromptPopover.value = false;
+  await promptDetect(true);
+};
+
+const promptDetect = async (useSam = true) => {
   if (!currentImage.value) {
     showToast('请先在左侧选择一张图片', 'warning');
     return;
@@ -2581,8 +2641,14 @@ const promptDetect = async () => {
     return;
   }
 
-  isPromptDetecting.value = true;
-  showToast(`正在通过 Prompt "${query}" 智能识别全图目标...`, 'info');
+  if (useSam) {
+    isPromptDetectAndRefining.value = true;
+    showToast(`正在使用世界模型识别并进行 SAM 高清边缘精修...`, 'info');
+  } else {
+    isPromptDetecting.value = true;
+    showToast(`正在通过 Prompt "${query}" 快速识别全图目标...`, 'info');
+  }
+
   try {
     const res = await fetch(`${API_BASE}/api/labeling/prompt_detect?dataset=${currentDataset.value}`, {
       method: 'POST',
@@ -2591,7 +2657,9 @@ const promptDetect = async () => {
         name: currentImage.value.name,
         prompt: query,
         conf: promptConf.value,
-        class_id: activeClassIndex.value
+        class_id: activeClassIndex.value,
+        model_path: selectedWorldModelPath.value,
+        use_sam: useSam
       })
     });
     
@@ -2606,7 +2674,11 @@ const promptDetect = async () => {
         polygons.value = [...polygons.value, ...newPolys];
         activePolyIndex.value = null;
         const targetClassName = classes.value[currentTargetClass] || query;
-        showToast(`✨ Prompt 识别成功！新增 ${data.polygons.length} 个实例，已标记为【${targetClassName}】`, 'success');
+        if (useSam) {
+          showToast(`✨ 识别并 SAM 优化成功！新增 ${data.polygons.length} 个高清实例，已标记为【${targetClassName}】`, 'success');
+        } else {
+          showToast(`✨ 全图识别成功！新增 ${data.polygons.length} 个目标边界框，已标记为【${targetClassName}】`, 'success');
+        }
       } else {
         showToast(`未识别到符合提示词 "${query}" 的目标物体`, 'warning');
       }
@@ -2620,6 +2692,7 @@ const promptDetect = async () => {
     showToast('连接开放词汇识别服务异常', 'error');
   } finally {
     isPromptDetecting.value = false;
+    isPromptDetectAndRefining.value = false;
   }
 };
 
@@ -3179,6 +3252,7 @@ watch(currentTab, (newTab) => {
     fetchImageList();
     fetchClasses();
     fetchModelsList();
+    fetchWorldModelsList();
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMoveGlobal);
@@ -3237,6 +3311,7 @@ onMounted(async () => {
   if (currentTab.value === 'label') {
     fetchImageList();
     fetchModelsList();
+    fetchWorldModelsList();
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMoveGlobal);

@@ -8,7 +8,7 @@ import psutil
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -20,8 +20,61 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from trainer import YOLOTrainer
 
-# 确定工作空间根目录
-WORKSPACE_DIR = Path(os.path.dirname(os.path.abspath(__file__))).parent.resolve()
+# 确定 server 目录与工作空间根目录
+SERVER_DIR = Path(os.path.dirname(os.path.abspath(__file__))).resolve()
+WORKSPACE_DIR = SERVER_DIR.parent.resolve()
+
+def load_server_config() -> Dict[str, Any]:
+    """
+    加载 server/config.json 配置文件。
+    若文件不存在或格式不正确，返回默认空配置，绝不抛出异常。
+    支持相对路径（相对当前 server 目录）与绝对路径。
+    """
+    config_file = SERVER_DIR / "config.json"
+    default_config = {
+        "extra_model_paths": {
+            "segment": [],
+            "world": []
+        }
+    }
+    if not config_file.exists():
+        return default_config
+    
+    try:
+        import json
+        with open(config_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        extra = data.get("extra_model_paths", {})
+        
+        # 规整化为 Path 对象列表
+        def to_path_list(val) -> List[Path]:
+            if not val:
+                return []
+            if isinstance(val, str):
+                val = [val]
+            paths = []
+            for p in val:
+                if not p or not isinstance(p, str):
+                    continue
+                path_obj = Path(p.strip())
+                # 若为相对路径，则以 SERVER_DIR（即当前 server 目录）为基准解析
+                if not path_obj.is_absolute():
+                    resolved_path = (SERVER_DIR / path_obj).resolve()
+                else:
+                    resolved_path = path_obj.resolve()
+                paths.append(resolved_path)
+            return paths
+
+        return {
+            "extra_model_paths": {
+                "segment": to_path_list(extra.get("segment")),
+                "world": to_path_list(extra.get("world"))
+            }
+        }
+    except Exception as e:
+        print(f"[Config] 加载 config.json 异常，已安全回退默认配置: {e}")
+        return default_config
 
 app = FastAPI(title="YOLO26s-seg 训练控制台后端 API")
 
@@ -303,6 +356,8 @@ class PromptDetectRequest(BaseModel):
     prompt: str = Field(..., description="提示词文本，如 'pig' 或 'pig, person'")
     conf: float = Field(default=0.25, ge=0.01, le=1.0, description="置信度阈值")
     class_id: int = Field(default=0, ge=0, description="默认分类索引 ID")
+    model_path: Optional[str] = Field(default=None, description="指定的世界模型路径")
+    use_sam: bool = Field(default=True, description="是否使用 SAM 模型进行高清边缘分割优化")
 
 class SAMRefineRequest(BaseModel):
     name: str = Field(..., description="图片文件名")
@@ -334,8 +389,8 @@ MODEL_IDLE_TIMEOUT = int(os.environ.get("MODEL_IDLE_TIMEOUT", 300))
 class LabelingPredictor:
     def __init__(self, workspace_dir: Path):
         self.workspace_dir = workspace_dir
-        self.yolo_models = {}  # 缓存已加载的 YOLO 实例: path_str -> model
-        self.yolo_world_model = None
+        self.yolo_models = {}        # 缓存已加载的 YOLO 分割模型: path_str -> model
+        self.yolo_world_models = {}  # 缓存已加载的 YOLO-World 开放词汇模型: path_str -> model
         self.sam_model = None
         # 各模型类型的最后使用时间戳
         self._last_used = {
@@ -348,11 +403,41 @@ class LabelingPredictor:
         """更新指定模型类型的最后使用时间"""
         self._last_used[model_type] = time.time()
 
-    def get_yolo_world_model(self):
+    def get_yolo_world_model(self, custom_path: str = None):
         self._touch("yolo_world")
-        if self.yolo_world_model is None:
-            from ultralytics import YOLOWorld
-            # 候选模型名称按推荐顺序查找 (m > s > l > x)
+        from ultralytics import YOLOWorld
+
+        # 1. 若指定了模型路径
+        if custom_path and custom_path.strip():
+            path_obj = Path(custom_path.strip())
+            if not path_obj.is_absolute():
+                full_path = (self.workspace_dir / path_obj).resolve()
+            else:
+                full_path = path_obj.resolve()
+            
+            full_path_str = str(full_path)
+            if full_path_str not in self.yolo_world_models:
+                if not full_path.exists():
+                    raise FileNotFoundError(f"指定的世界模型权重不存在: {full_path.name}")
+                
+                # 兼容性防御：若为 .pth 文件且非 Ultralytics 格式（如 countgd）
+                if full_path.suffix.lower() == ".pth":
+                    try:
+                        print(f"[YOLOWorld] 正在加载世界模型权重: {full_path.name}")
+                        self.yolo_world_models[full_path_str] = YOLOWorld(full_path_str)
+                    except Exception as load_err:
+                        raise RuntimeError(
+                            f"无法直接通过 Ultralytics 加载权重 '{full_path.name}' ({load_err})。"
+                            f"若该模型为 CountGD / Grounding DINO 结构，需要安装相应的模型定义库。"
+                        )
+                else:
+                    print(f"[YOLOWorld] 正在加载世界模型权重: {full_path.name}")
+                    self.yolo_world_models[full_path_str] = YOLOWorld(full_path_str)
+            return self.yolo_world_models[full_path_str]
+
+        # 2. 默认模型查找策略
+        default_key = "__default__"
+        if default_key not in self.yolo_world_models:
             candidate_names = [
                 "yolov8m-worldv2.pt",
                 "yolov8s-worldv2.pt",
@@ -379,12 +464,12 @@ class LabelingPredictor:
             
             if found_path:
                 print(f"[YOLOWorld] 正在加载本地已下载权重: {found_path.name}")
-                self.yolo_world_model = YOLOWorld(str(found_path))
+                self.yolo_world_models[default_key] = YOLOWorld(str(found_path))
             else:
                 # 若无本地权重，退回默认名称
                 print("[YOLOWorld] 未在 models/ 或 models/world/ 目录下找到本地 YOLO-World 权重，将尝试网络在线加载/下载 yolov8m-worldv2.pt...")
-                self.yolo_world_model = YOLOWorld("yolov8m-worldv2.pt")
-        return self.yolo_world_model
+                self.yolo_world_models[default_key] = YOLOWorld("yolov8m-worldv2.pt")
+        return self.yolo_world_models[default_key]
 
     def get_yolo_model(self, custom_path: str = None):
         self._touch("yolo")
@@ -476,12 +561,12 @@ class LabelingPredictor:
         unloaded = []
 
         # 卸载 YOLO-World
-        if self.yolo_world_model is not None:
+        if self.yolo_world_models:
             idle_sec = now - self._last_used.get("yolo_world", 0)
             if timeout == 0 or idle_sec > timeout:
-                del self.yolo_world_model
-                self.yolo_world_model = None
-                unloaded.append(f"YOLO-World (空闲 {int(idle_sec)}s)")
+                world_count = len(self.yolo_world_models)
+                self.yolo_world_models.clear()
+                unloaded.append(f"YOLO-World ×{world_count} (空闲 {int(idle_sec)}s)")
 
         # 卸载 SAM
         if self.sam_model is not None:
@@ -516,9 +601,10 @@ class LabelingPredictor:
         """获取当前已加载模型的状态信息"""
         now = time.time()
         info = {}
-        if self.yolo_world_model is not None:
+        if self.yolo_world_models:
             info["yolo_world"] = {
                 "loaded": True,
+                "count": len(self.yolo_world_models),
                 "idle_seconds": int(now - self._last_used.get("yolo_world", now)),
             }
         if self.sam_model is not None:
@@ -979,9 +1065,12 @@ def auto_detect_polygons(req: Dict[str, str], dataset: str = "default"):
 @app.get("/api/labeling/models")
 def get_labeling_models():
     """
-    扫描 runs 训练产物目录以及 models/ (含 models/segment/) 目录下的所有分割权重。
+    扫描 runs 训练产物目录、models/ (含 models/segment/) 目录以及 config.json 配置的 extra_model_paths.segment 目录下的所有分割权重。
     自动排除 SAM 交互分割权重与 YOLO-World 开放词汇模型。
     """
+    cfg = load_server_config()
+    extra_seg_dirs = cfg.get("extra_model_paths", {}).get("segment", [])
+    
     models_dir = WORKSPACE_DIR / "models"
     segment_dir = models_dir / "segment"
     runs_dir = WORKSPACE_DIR / "runs"
@@ -993,7 +1082,7 @@ def get_labeling_models():
     
     def is_seg_weight(filename: str) -> bool:
         fn_lower = filename.lower()
-        if not fn_lower.endswith(".pt"):
+        if not (fn_lower.endswith(".pt") or fn_lower.endswith(".onnx") or fn_lower.endswith(".engine")):
             return False
         # 排除 SAM 系列与 YOLO-World 系列权重
         if "sam" in fn_lower or "world" in fn_lower:
@@ -1008,7 +1097,7 @@ def get_labeling_models():
                 try:
                     rel_path = file.relative_to(WORKSPACE_DIR).as_posix()
                 except Exception:
-                    rel_path = str(file)
+                    rel_path = str(file.resolve())
                     
                 if rel_path in seen_paths:
                     continue
@@ -1060,8 +1149,104 @@ def get_labeling_models():
                         "path": rel_path,
                         "type": "default" if file.name == "yolo26s-seg.pt" else "custom"
                     })
+
+    # 4. 扫描外部配置目录中的模型文件 (extra_model_paths.segment)
+    for extra_dir in extra_seg_dirs:
+        try:
+            if extra_dir.exists() and extra_dir.is_dir():
+                for file in extra_dir.iterdir():
+                    if file.is_file() and is_seg_weight(file.name):
+                        abs_path = str(file.resolve())
+                        if abs_path not in seen_paths:
+                            seen_paths.add(abs_path)
+                            models_list.append({
+                                "name": f"{file.name}",
+                                "path": abs_path,
+                                "type": "extra"
+                            })
+        except Exception as e:
+            print(f"[ModelScan] 扫描外部分割目录 {extra_dir} 异常已安全忽略: {e}")
                     
     return models_list
+
+# 7.2 获取可用的世界/开放词汇模型列表
+@app.get("/api/labeling/world_models")
+def get_labeling_world_models():
+    """
+    扫描 models/world/、models/ 目录以及 config.json 配置的 extra_model_paths.world 目录下的所有世界/开放词汇模型权重 (.pt, .pth)。
+    """
+    cfg = load_server_config()
+    extra_world_dirs = cfg.get("extra_model_paths", {}).get("world", [])
+    
+    models_dir = WORKSPACE_DIR / "models"
+    world_sub_dir = models_dir / "world"
+    
+    models_dir.mkdir(parents=True, exist_ok=True)
+    
+    world_models_list = []
+    seen_paths = set()
+    
+    def is_world_weight(filename: str) -> bool:
+        fn_lower = filename.lower()
+        if not (fn_lower.endswith(".pt") or fn_lower.endswith(".pth")):
+            return False
+        # 排除 SAM 权重
+        if "sam" in fn_lower:
+            return False
+        return True
+
+    # 1. 扫描 models/world/ 子目录
+    if world_sub_dir.exists() and world_sub_dir.is_dir():
+        for file in world_sub_dir.iterdir():
+            if file.is_file() and is_world_weight(file.name):
+                rel_path = f"models/world/{file.name}"
+                if rel_path not in seen_paths:
+                    seen_paths.add(rel_path)
+                    world_models_list.append({
+                        "name": file.name,
+                        "path": rel_path,
+                        "type": "custom"
+                    })
+
+    # 2. 扫描 models/ 根目录下包含 world 的权重
+    if models_dir.exists() and models_dir.is_dir():
+        for file in models_dir.iterdir():
+            if file.is_file() and is_world_weight(file.name) and "world" in file.name.lower():
+                rel_path = f"models/{file.name}"
+                if rel_path not in seen_paths:
+                    seen_paths.add(rel_path)
+                    world_models_list.append({
+                        "name": file.name,
+                        "path": rel_path,
+                        "type": "custom"
+                    })
+
+    # 3. 扫描外部配置目录 (extra_model_paths.world)
+    for extra_dir in extra_world_dirs:
+        try:
+            if extra_dir.exists() and extra_dir.is_dir():
+                for file in extra_dir.iterdir():
+                    if file.is_file() and is_world_weight(file.name):
+                        abs_path = str(file.resolve())
+                        if abs_path not in seen_paths:
+                            seen_paths.add(abs_path)
+                            world_models_list.append({
+                                "name": f"{file.name}",
+                                "path": abs_path,
+                                "type": "extra"
+                            })
+        except Exception as e:
+            print(f"[ModelScan] 扫描外部世界模型目录 {extra_dir} 异常已安全忽略: {e}")
+
+    # 如果没有任何本地或外部世界模型，提供默认回退选项
+    if not world_models_list:
+        world_models_list.append({
+            "name": "yolov8m-worldv2.pt (默认内置/在线)",
+            "path": "",
+            "type": "default"
+        })
+
+    return world_models_list
 
 # 8. SAM 辅助点击预测
 @app.post("/api/labeling/sam_predict")
@@ -1102,7 +1287,7 @@ def sam_predict_polygons(req: SAMPredictRequest, dataset: str = "default"):
         except Exception:
             pass
 
-# 8.1 基于 Prompt 开放词汇自动识别 (YOLO-World + SAM 多边形提取)
+# 8.1 基于 Prompt 开放词汇自动识别 (YOLO-World + 可选 SAM 多边形提取)
 @app.post("/api/labeling/prompt_detect")
 def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
     image_path = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images" / req.name
@@ -1128,8 +1313,8 @@ def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
 
         # 禁用梯度计算，防止推理过程中构建计算图导致 tensor 累积泄漏
         with torch.no_grad():
-            # 1. 使用 YOLO-World 进行开放词汇检测
-            yolo_world = predictor.get_yolo_world_model()
+            # 1. 使用选定的 YOLO-World 开放词汇模型进行检测
+            yolo_world = predictor.get_yolo_world_model(req.model_path)
             
             # 防御 PyTorch 在多轮更换 Prompt 时发生的 Device Mismatch 错误
             try:
@@ -1142,11 +1327,14 @@ def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
                     print(f"[PromptDetect] 自动恢复模型设备上下文: {device_err}")
                     # 先释放局部引用，确保旧模型可被 GC 回收
                     del yolo_world
-                    predictor.yolo_world_model = None
+                    if req.model_path and req.model_path in predictor.yolo_world_models:
+                        predictor.yolo_world_models.pop(req.model_path, None)
+                    else:
+                        predictor.yolo_world_models.pop("__default__", None)
                     gc.collect()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                    yolo_world = predictor.get_yolo_world_model()
+                    yolo_world = predictor.get_yolo_world_model(req.model_path)
                     yolo_world.set_classes(prompts)
                     if hasattr(yolo_world, 'model') and yolo_world.model is not None:
                         yolo_world.model.to(device)
@@ -1170,37 +1358,38 @@ def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
             results = None
             
             max_conf = float(conf_scores.max()) if len(conf_scores) > 0 else 0.0
-            print(f"[PromptDetect] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf} -> 检测到 {len(boxes_xyxy)} 个目标, 最高置信度: {max_conf:.4f}")
+            print(f"[PromptDetect] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf}, use_sam={req.use_sam} -> 检测到 {len(boxes_xyxy)} 个目标, 最高置信度: {max_conf:.4f}")
             
             polygons = []
             
-            # 2. 尝试使用 SAM 获取精细的多边形 Mask
+            # 2. 如果开启了 SAM 优化 (req.use_sam=True)，尝试使用 SAM 获取精细的多边形 Mask
             sam_available = False
-            try:
-                sam = predictor.get_sam_model()
-                # 将检测到的 Boxes 传给 SAM 预测 Segmentation Mask
-                sam_results = sam(str(image_path), bboxes=boxes_xyxy.tolist())
-                if len(sam_results) > 0 and sam_results[0].masks is not None:
-                    sam_masks = sam_results[0].masks.xyn
-                    for i, segment in enumerate(sam_masks):
-                        if len(segment) >= 3:
-                            pts = simplify_polygon(segment.tolist())
-                            polygons.append({
-                                "class_id": req.class_id,
-                                "points": pts,
-                                "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
-                            })
-                    sam_available = True
-            except Exception as sam_err:
-                print(f"[PromptDetect] SAM 提拉 Mask 失败或模型未找到，改用矩形边界框: {sam_err}")
-                sam_available = False
-            finally:
-                # 及时释放 SAM 推理结果
-                if sam_results is not None:
-                    del sam_results
-                    sam_results = None
+            if req.use_sam:
+                try:
+                    sam = predictor.get_sam_model()
+                    # 将检测到的 Boxes 传给 SAM 预测 Segmentation Mask
+                    sam_results = sam(str(image_path), bboxes=boxes_xyxy.tolist())
+                    if len(sam_results) > 0 and sam_results[0].masks is not None:
+                        sam_masks = sam_results[0].masks.xyn
+                        for i, segment in enumerate(sam_masks):
+                            if len(segment) >= 3:
+                                pts = simplify_polygon(segment.tolist())
+                                polygons.append({
+                                    "class_id": req.class_id,
+                                    "points": pts,
+                                    "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
+                                })
+                        sam_available = True
+                except Exception as sam_err:
+                    print(f"[PromptDetect] SAM 提拉 Mask 失败或模型未找到，改用矩形边界框: {sam_err}")
+                    sam_available = False
+                finally:
+                    # 及时释放 SAM 推理结果
+                    if sam_results is not None:
+                        del sam_results
+                        sam_results = None
                 
-            # 3. 若无 SAM，使用 4 点归一化矩形框作为 Segmentation 多边形
+            # 3. 若未开启 SAM 或 SAM 执行失败，使用 4 点归一化矩形框作为 Segmentation 多边形
             if not sam_available:
                 for i, box in enumerate(boxes_xyxy):
                     x1, y1, x2, y2 = box
