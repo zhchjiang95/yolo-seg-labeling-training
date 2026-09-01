@@ -769,8 +769,22 @@
                       />
                     </div>
 
-                    <!-- 4. 双动作按钮组：全图识别 (无优化) & 识别并SAM优化 -->
-                    <div style="display: flex; gap: 8px;">
+                    <!-- 4. 动作按钮组：SAM3 模式 (单按钮) / YOLO-World 模式 (双按钮) -->
+                    <div style="display: flex; gap: 8px;" v-if="isSam3Selected">
+                      <!-- SAM 3 模式：一步到位文本检测+精细分割 -->
+                      <button 
+                        class="model-popover-refine-btn" 
+                        style="flex: 1;"
+                        :disabled="!currentImage || isPromptDetecting || isPromptDetectAndRefining || !promptText.trim()" 
+                        @click="handlePromptDetectAndRefine"
+                        title="使用 SAM 3 原生文本词汇能力，一步到位完成全图目标检测与精细边缘分割"
+                      >
+                        <span v-if="isPromptDetectAndRefining" class="spinner" style="margin-right: 4px;"></span>
+                        <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
+                        <span>{{ isPromptDetectAndRefining ? 'SAM3 分割中...' : 'SAM3 智能分割' }}</span>
+                      </button>
+                    </div>
+                    <div style="display: flex; gap: 8px;" v-else>
                       <button 
                         class="model-popover-detect-btn" 
                         :disabled="!currentImage || isPromptDetecting || isPromptDetectAndRefining || !promptText.trim()" 
@@ -839,6 +853,17 @@
             <span class="subtoolbar-label">标注区域填充透明度:</span>
             <input type="range" v-model.number="polyFillOpacity" min="0.1" max="0.8" step="0.05" class="subtoolbar-slider" title="调节多边形颜色填充透明度" />
             <span class="subtoolbar-value">{{ Math.round(polyFillOpacity * 100) }}%</span>
+          </div>
+
+          <!-- 属性 3: Prompt 识别置信度阈值 -->
+          <div class="subtoolbar-item" style="border-left: 1px solid var(--border-color); padding-left: 12px; margin-left: 4px;">
+            <svg style="width: 13px; height: 13px; color: var(--primary);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+            <span class="subtoolbar-label">Prompt 识别置信度:</span>
+            <input type="range" v-model.number="promptConf" min="0.05" max="0.95" step="0.05" class="subtoolbar-slider" title="实时过滤已识别目标的置信度" />
+            <span class="subtoolbar-value">{{ promptConf.toFixed(2) }}</span>
           </div>
 
           <!-- 属性 2: 擦除半径 (仅橡皮擦或 Alt 涂抹模式时显示) -->
@@ -960,7 +985,7 @@
               <!-- 1. 渲染所有已确定的多边形 -->
               <polygon
                 v-for="(poly, polyIndex) in polygons"
-                v-show="!poly.hidden"
+                v-show="!poly.hidden && (poly.confidence === undefined || poly.confidence >= promptConf)"
                 :key="'poly-' + polyIndex"
                 :points="poly.points.map(pt => `${pt[0] * imgNaturalWidth},${pt[1] * imgNaturalHeight}`).join(' ')"
                 class="svg-polygon"
@@ -1095,7 +1120,7 @@
               <!-- 6. 多边形轮廓中心数字编号徽章 (与右侧分类标签管理/图像实例严格对应) -->
               <g
                 v-for="(poly, polyIndex) in polygons"
-                v-show="!poly.hidden"
+                v-show="!poly.hidden && (poly.confidence === undefined || poly.confidence >= promptConf)"
                 :key="'poly-badge-' + polyIndex"
                 class="svg-poly-badge"
                 :class="{ active: activePolyIndex === polyIndex }"
@@ -1301,7 +1326,7 @@ const showToast = (message, type = 'info') => {
 // ==========================================
 
 const currentTab = ref('train'); // train | label
-const isDark = ref(true); // 默认暗色模式
+const isDark = ref(false); // 默认暗色模式
 
 const form = reactive({
   epochs: 300,
@@ -1716,12 +1741,20 @@ const activePolyFloatingPos = computed(() => {
 
 // Prompt 开放词汇识别
 const promptText = ref('pig');
-const promptConf = ref(0.01); // 默认 0.01 置信度，最大化捕获全图目标
+const promptConf = ref(0.3); // 默认 0.3 置信度，控制 UI 上的显示过滤
+const promptPreviewConf = ref(0.3); // 保留但可能不用，直接复用 promptConf置信度，最大化捕获全图目标
 const isPromptDetecting = ref(false); // 是否处于“全图识别”执行中
 const isPromptDetectAndRefining = ref(false); // 是否处于“识别并SAM优化”执行中
 const showPromptPopover = ref(false);
 const worldModelsList = ref([]); // 后端扫描出的世界/开放词汇模型列表
 const selectedWorldModelPath = ref(''); // 当前选中的世界模型路径
+
+// 判断当前选中的模型是否为 SAM 3 系列（原生支持文本词汇一步到位检测+分割）
+const isSam3Selected = computed(() => {
+  if (!selectedWorldModelPath.value) return false;
+  const name = selectedWorldModelPath.value.split('/').pop().toLowerCase();
+  return name.startsWith('sam3') && name.endsWith('.pt');
+});
 
 const togglePromptPopover = () => {
   showPromptPopover.value = !showPromptPopover.value;
@@ -2656,7 +2689,7 @@ const promptDetect = async (useSam = true) => {
       body: JSON.stringify({ 
         name: currentImage.value.name,
         prompt: query,
-        conf: promptConf.value,
+        conf: 0.05, // 固定使用最低置信度，用于前端滑块实时过滤
         class_id: activeClassIndex.value,
         model_path: selectedWorldModelPath.value,
         use_sam: useSam
@@ -2669,7 +2702,8 @@ const promptDetect = async (useSam = true) => {
         const currentTargetClass = activeClassIndex.value;
         const newPolys = data.polygons.map(poly => ({
           class_id: currentTargetClass,
-          points: poly.points
+          points: poly.points,
+          confidence: poly.confidence
         }));
         polygons.value = [...polygons.value, ...newPolys];
         activePolyIndex.value = null;

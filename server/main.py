@@ -392,11 +392,13 @@ class LabelingPredictor:
         self.yolo_models = {}        # 缓存已加载的 YOLO 分割模型: path_str -> model
         self.yolo_world_models = {}  # 缓存已加载的 YOLO-World 开放词汇模型: path_str -> model
         self.sam_model = None
+        self.sam3_models = {}        # 缓存已加载的 SAM 3 文本推理模型: path_str -> model
         # 各模型类型的最后使用时间戳
         self._last_used = {
             "yolo": 0.0,       # YOLO-seg 自动检测
             "yolo_world": 0.0, # YOLO-World Prompt 识别
             "sam": 0.0,        # SAM 辅助标注
+            "sam3": 0.0,       # SAM 3 文本词汇识别
         }
 
     def _touch(self, model_type: str):
@@ -519,10 +521,10 @@ class LabelingPredictor:
         self._touch("sam")
         if self.sam_model is None:
             sam_names = [
+                "sam2.1_b.pt", 
                 "sam3.1_multiplex.pt", 
                 "sam3.1.pt", 
                 "sam3.pt", 
-                "sam2.1_b.pt", 
                 "sam_b.pt", 
                 "mobile_sam.pt", 
                 "sam2.1_t.pt"
@@ -547,6 +549,33 @@ class LabelingPredictor:
             self.sam_model = SAM(str(found_path))
         return self.sam_model
 
+    def get_sam3_model(self, model_path: str):
+        """加载并缓存 SAM 3 文本推理模型（Semantic 模型，支持 Promptable Concept Segmentation）"""
+        self._touch("sam3")
+        import torch
+        from ultralytics.models.sam.build_sam3 import build_sam3_image_model
+        
+        path_obj = Path(model_path.strip())
+        if not path_obj.is_absolute():
+            full_path = (self.workspace_dir / path_obj).resolve()
+        else:
+            full_path = path_obj.resolve()
+        
+        full_path_str = str(full_path)
+        if full_path_str not in self.sam3_models:
+            if not full_path.exists():
+                raise FileNotFoundError(f"指定的 SAM 3 模型权重不存在: {full_path.name}")
+            print(f"[SAM3] 正在加载 SAM 3 文本推理(Semantic)模型: {full_path.name}")
+            
+            # 使用 build_sam3_image_model 而不是通用的 SAM()，以获取具有 backbone 属性的语义分割专用模型
+            device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            model = build_sam3_image_model(full_path_str)
+            model.to(device)
+            model.eval()
+            
+            self.sam3_models[full_path_str] = model
+        return self.sam3_models[full_path_str]
+
     def unload_idle_models(self, timeout: int = None):
         """
         卸载超过空闲超时时间的模型，释放 CPU/GPU 内存。
@@ -567,6 +596,14 @@ class LabelingPredictor:
                 world_count = len(self.yolo_world_models)
                 self.yolo_world_models.clear()
                 unloaded.append(f"YOLO-World ×{world_count} (空闲 {int(idle_sec)}s)")
+
+        # 卸载 SAM 3 文本推理模型
+        if self.sam3_models:
+            idle_sec = now - self._last_used.get("sam3", 0)
+            if timeout == 0 or idle_sec > timeout:
+                sam3_count = len(self.sam3_models)
+                self.sam3_models.clear()
+                unloaded.append(f"SAM3 ×{sam3_count} (空闲 {int(idle_sec)}s)")
 
         # 卸载 SAM
         if self.sam_model is not None:
@@ -1190,8 +1227,8 @@ def get_labeling_world_models():
         fn_lower = filename.lower()
         if not (fn_lower.endswith(".pt") or fn_lower.endswith(".pth")):
             return False
-        # 排除 SAM 权重
-        if "sam" in fn_lower:
+        # 排除普通的 SAM 权重，但保留 SAM 3（支持文本直推 PCS）
+        if "sam" in fn_lower and "sam3" not in fn_lower:
             return False
         return True
 
@@ -1237,6 +1274,20 @@ def get_labeling_world_models():
                             })
         except Exception as e:
             print(f"[ModelScan] 扫描外部世界模型目录 {extra_dir} 异常已安全忽略: {e}")
+
+    # 4. 扫描 models/sam/ 目录下的 SAM 3 权重（原生支持文本词汇输入的 PCS 分割模型）
+    sam_sub_dir = models_dir / "sam"
+    if sam_sub_dir.exists() and sam_sub_dir.is_dir():
+        for file in sam_sub_dir.iterdir():
+            if file.is_file() and file.name.lower().startswith("sam3") and file.name.lower().endswith(".pt"):
+                rel_path = f"models/sam/{file.name}"
+                if rel_path not in seen_paths:
+                    seen_paths.add(rel_path)
+                    world_models_list.append({
+                        "name": f"{file.name} (SAM3 文本分割)",
+                        "path": rel_path,
+                        "type": "sam3"
+                    })
 
     # 如果没有任何本地或外部世界模型，提供默认回退选项
     if not world_models_list:
@@ -1287,7 +1338,7 @@ def sam_predict_polygons(req: SAMPredictRequest, dataset: str = "default"):
         except Exception:
             pass
 
-# 8.1 基于 Prompt 开放词汇自动识别 (YOLO-World + 可选 SAM 多边形提取)
+# 8.1 基于 Prompt 开放词汇自动识别 (YOLO-World / SAM 3 + 可选 SAM 多边形提取)
 @app.post("/api/labeling/prompt_detect")
 def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
     image_path = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images" / req.name
@@ -1302,6 +1353,12 @@ def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
     if not prompts:
         raise HTTPException(status_code=400, detail="有效提示词不能为空")
     
+    # 判断选中的模型是否为 SAM 3 系列（原生支持文本词汇输入）
+    is_sam3_model = False
+    if req.model_path:
+        model_name_lower = Path(req.model_path).name.lower()
+        is_sam3_model = model_name_lower.startswith("sam3") and model_name_lower.endswith(".pt")
+    
     # 用于 finally 块中安全释放的局部变量
     results = None
     sam_results = None
@@ -1310,9 +1367,88 @@ def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
         import torch
         import gc
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        
+        # 推理前清理显存与垃圾碎片，降低 OOM 风险
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
         # 禁用梯度计算，防止推理过程中构建计算图导致 tensor 累积泄漏
         with torch.no_grad():
+            
+            # ============================================
+            # 分支 A: SAM 3 文本直推（一步到位检测+精细分割）
+            # ============================================
+            if is_sam3_model:
+                # 获取或缓存 SAM 模型实例（已改为返回 semantic backbone 原生模型）
+                sam3_model = predictor.get_sam3_model(req.model_path)
+                print(f"[SAM3-PCS] 图片: {req.name}, 提示词: '{req.prompt}', 置信度阈值: {req.conf}, 使用 SAM 3 文本直推分割")
+                
+                from ultralytics.models.sam import SAM3SemanticPredictor
+                
+                # 配置覆盖，限制 imgsz 为 1008 避免高分辨率图直接推理导致 OOM
+                overrides = {
+                    "conf": req.conf,
+                    "task": "segment",
+                    "mode": "predict",
+                    "model": req.model_path,
+                    "device": device,
+                    "imgsz": 1008,
+                    "save": False,
+                    "verbose": False
+                }
+                
+                # 初始化专用语义分割预测器
+                sam3_predictor = SAM3SemanticPredictor(overrides=overrides)
+                
+                # 复用已加载的底层 model 以避免重复从磁盘读取权重
+                results = sam3_predictor(source=str(image_path), model=sam3_model, text=prompts)
+                
+                if len(results) == 0:
+                    print(f"[SAM3-PCS] 未检测到任何匹配目标")
+                    return {"polygons": []}
+                
+                r = results[0]
+                polygons = []
+                
+                # SAM 3 直接返回 masks + boxes，提取归一化多边形
+                if r.masks is not None and len(r.masks) > 0:
+                    sam3_masks = r.masks.xyn
+                    # 提取类别信息（SAM 3 的 boxes 最后一列为 cls）
+                    cls_ids = r.boxes.cls.cpu().numpy().astype(int) if r.boxes is not None and r.boxes.cls is not None else None
+                    conf_scores = r.boxes.conf.cpu().numpy() if r.boxes is not None and r.boxes.conf is not None else None
+                    
+                    for i, segment in enumerate(sam3_masks):
+                        if len(segment) >= 3:
+                            pts = simplify_polygon(segment.tolist())
+                            # 确定标签：优先使用模型返回的类别索引映射到 prompts
+                            label = prompts[0]
+                            if cls_ids is not None and i < len(cls_ids):
+                                cls_idx = int(cls_ids[i])
+                                if cls_idx < len(prompts):
+                                    label = prompts[cls_idx]
+                            
+                            conf_val = float(conf_scores[i]) if conf_scores is not None and i < len(conf_scores) else 1.0
+                            polygons.append({
+                                "class_id": req.class_id,
+                                "points": pts,
+                                "label": label,
+                                "confidence": conf_val
+                            })
+                    
+                    print(f"[SAM3-PCS] 成功分割 {len(polygons)} 个目标实例")
+                else:
+                    print(f"[SAM3-PCS] SAM 3 未生成有效 Mask")
+                
+                # 释放推理结果
+                del r, results, sam3_predictor
+                results = None
+                
+                return {"polygons": polygons}
+            
+            # ============================================
+            # 分支 B: YOLO-World 两阶段流水线（检测 + 可选 SAM 优化）
+            # ============================================
             # 1. 使用选定的 YOLO-World 开放词汇模型进行检测
             yolo_world = predictor.get_yolo_world_model(req.model_path)
             
@@ -1374,10 +1510,12 @@ def prompt_detect_polygons(req: PromptDetectRequest, dataset: str = "default"):
                         for i, segment in enumerate(sam_masks):
                             if len(segment) >= 3:
                                 pts = simplify_polygon(segment.tolist())
+                                conf_val = float(conf_scores[i]) if i < len(conf_scores) else 1.0
                                 polygons.append({
                                     "class_id": req.class_id,
                                     "points": pts,
-                                    "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0]
+                                    "label": prompts[cls_ids[i]] if i < len(cls_ids) else prompts[0],
+                                    "confidence": conf_val
                                 })
                         sam_available = True
                 except Exception as sam_err:

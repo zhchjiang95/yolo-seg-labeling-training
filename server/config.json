@@ -1,6 +1,6 @@
 {
   "extra_model_paths": {
     "segment": "../../../tools/models/segment",
-    "world": "../../../tools/models/world"
+    "world": ["../../../tools/models/world", "../../../tools/models/sam"]
   }
 }

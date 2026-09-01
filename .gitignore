@@ -33,6 +33,9 @@ wheels/
 *.egg
 runs/
 *.pt
+*.pth
+*.onnx
+*.engine
 
 # Node & Frontend
 node_modules/

@@ -126,6 +126,7 @@ xnl-training-platform/
 * **模型兼容性说明**：
   - **分割模型 (`segment`)**：支持 `.pt`、`.onnx`、`.engine` 等格式（自动排除 SAM 和 World 权重）。
   - **世界模型 (`world`)**：原生支持所有 Ultralytics 格式的 YOLO-World 权重（`.pt`）。对于 `countgd_plusplus.pth` 等基于 Grounding DINO 结构的外部 `.pth` 权重，系统已内置安全异常保护与适配提示。
+  - **SAM 3 文本分割**：系统自动扫描 `models/sam/` 下的 `sam3*.pt` 权重（如 `sam3.1_multiplex.pt`），在 Prompt 识别弹窗中可直接选择。SAM 3 原生支持文本词汇输入，无需 YOLO-World 中转，**一步到位完成全图检测+精细边缘分割**（Promptable Concept Segmentation）。
 
 ---
 

@@ -1673,8 +1673,8 @@ select:focus {
 
 .zoom-indicator {
   position: absolute;
-  bottom: 24px;
-  right: 24px;
+  top: 14px;
+  right: 14px;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
   padding: 4px 8px;
@@ -2382,7 +2382,7 @@ select:focus {
 /* 标注画布顶部居中融合式控制 Bar */
 .top-floating-control-bar {
   position: absolute;
-  top: 12px;
+  bottom: 14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 25;
