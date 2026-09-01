@@ -864,6 +864,7 @@
             <span class="subtoolbar-label">Prompt 识别置信度:</span>
             <input type="range" v-model.number="promptConf" min="0.05" max="0.95" step="0.05" class="subtoolbar-slider" title="实时过滤已识别目标的置信度" />
             <span class="subtoolbar-value">{{ promptConf.toFixed(2) }}</span>
+            <button v-if="hasHiddenPromptPolygons" @click="applyPromptConf" class="tool-btn action-btn" style="padding: 2px 6px; font-size: 11px; margin-left: 6px; background: var(--success); color: white; border-radius: 4px; border: none; cursor: pointer;" title="永久移除当前被隐藏的低置信度目标">应用</button>
           </div>
 
           <!-- 属性 2: 擦除半径 (仅橡皮擦或 Alt 涂抹模式时显示) -->
@@ -1206,6 +1207,7 @@
           </div>
           <div
             v-for="(poly, idx) in polygons"
+            v-show="poly.confidence === undefined || poly.confidence >= promptConf"
             :key="'inst-' + idx"
             :id="'inst-item-' + idx"
             class="instance-item"
@@ -1742,7 +1744,24 @@ const activePolyFloatingPos = computed(() => {
 // Prompt 开放词汇识别
 const promptText = ref('pig');
 const promptConf = ref(0.3); // 默认 0.3 置信度，控制 UI 上的显示过滤
-const promptPreviewConf = ref(0.3); // 保留但可能不用，直接复用 promptConf置信度，最大化捕获全图目标
+const promptPreviewConf = ref(0.3); // 保留但可能不用，直接复用 promptConf
+
+const hasHiddenPromptPolygons = computed(() => {
+  return polygons.value.some(p => p.confidence !== undefined && p.confidence < promptConf.value);
+});
+
+const applyPromptConf = () => {
+  const originalCount = polygons.value.length;
+  polygons.value = polygons.value.filter(p => p.confidence === undefined || p.confidence >= promptConf.value);
+  
+  // 清除剩余多边形的 confidence 字段（可选），但保留也无妨，这里保留它
+  const removedCount = originalCount - polygons.value.length;
+  if (removedCount > 0) {
+    saveHistory();
+    showToast(`已成功移除 ${removedCount} 个低置信度目标`, 'success');
+  }
+};
+
 const isPromptDetecting = ref(false); // 是否处于“全图识别”执行中
 const isPromptDetectAndRefining = ref(false); // 是否处于“识别并SAM优化”执行中
 const showPromptPopover = ref(false);
