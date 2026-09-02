@@ -281,19 +281,25 @@ def get_sysinfo(dataset: str = "default"):
     """获取服务器系统硬件和数据集概要信息"""
     # 1. 硬件信息
     cpu_percent = psutil.cpu_percent(interval=None)
-    memory = psutil.virtual_memory()
+    # 使用当前进程 RSS 内存，而非系统全局内存
+    # 这样能真实反映模型加载/卸载对服务进程的内存影响
+    process = psutil.Process()
+    proc_mem = process.memory_info()
+    proc_mem_used_gb = round(proc_mem.rss / (1024 ** 3), 2)
+    sys_memory = psutil.virtual_memory()
     
     gpu_available = False
     gpu_name = "N/A"
-    gpu_memory_used = 0
-    gpu_memory_total = 0
+    gpu_memory_used_mb = 0
+    gpu_memory_total_mb = 0
     
     try:
         import torch
         gpu_available = torch.cuda.is_available()
         if gpu_available:
             gpu_name = torch.cuda.get_device_name(0)
-            gpu_memory_used = torch.cuda.memory_allocated(0) / (1024 ** 2)  # MB
+            gpu_memory_used_mb = round(torch.cuda.memory_allocated(0) / (1024 ** 2), 1)
+            gpu_memory_total_mb = round(torch.cuda.get_device_properties(0).total_mem / (1024 ** 2), 1)
     except Exception:
         pass
 
@@ -321,11 +327,14 @@ def get_sysinfo(dataset: str = "default"):
 
     return {
         "cpu_percent": cpu_percent,
-        "memory_percent": memory.percent,
-        "memory_used_gb": round(memory.used / (1024 ** 3), 2),
-        "memory_total_gb": round(memory.total / (1024 ** 3), 2),
+        "memory_percent": sys_memory.percent,
+        "memory_used_gb": proc_mem_used_gb,
+        "sys_memory_used_gb": round(sys_memory.used / (1024 ** 3), 2),
+        "memory_total_gb": round(sys_memory.total / (1024 ** 3), 2),
         "gpu_available": gpu_available,
         "gpu_name": gpu_name,
+        "gpu_memory_used_mb": gpu_memory_used_mb,
+        "gpu_memory_total_mb": gpu_memory_total_mb,
         "dataset_status": dataset_status,
         "dataset_size_mb": dataset_size_mb,
         "dataset_path": dataset_path_str

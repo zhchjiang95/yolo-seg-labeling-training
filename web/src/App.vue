@@ -288,8 +288,12 @@
               <div class="sys-info-val">{{ sysInfo.cpu_percent }}%</div>
             </div>
             <div class="sys-info-item">
-              <div class="sys-info-label">内存使用</div>
-              <div class="sys-info-val">{{ sysInfo.memory_used_gb }} / {{ sysInfo.memory_total_gb }} GB</div>
+              <div class="sys-info-label">系统内存</div>
+              <div class="sys-info-val">{{ sysInfo.sys_memory_used_gb }} / {{ sysInfo.memory_total_gb }} GB</div>
+            </div>
+            <div class="sys-info-item">
+              <div class="sys-info-label">服务进程</div>
+              <div class="sys-info-val">{{ sysInfo.memory_used_gb }} GB</div>
             </div>
             <div class="sys-info-item">
               <div class="sys-info-label">GPU 加速</div>
@@ -302,6 +306,12 @@
               <div class="sys-info-val" :style="{ color: sysInfo.dataset_status === 'ready' ? 'var(--success)' : 'var(--error)' }">
                 {{ sysInfo.dataset_status === 'ready' ? '就绪' : '缺失' }}
               </div>
+            </div>
+          </div>
+          <div v-if="sysInfo.gpu_available && sysInfo.gpu_memory_total_mb > 0" class="sys-info-row" style="margin-top: 8px;">
+            <div class="sys-info-item" style="flex: 1;">
+              <div class="sys-info-label">GPU 显存</div>
+              <div class="sys-info-val">{{ sysInfo.gpu_memory_used_mb }} / {{ sysInfo.gpu_memory_total_mb }} MB</div>
             </div>
           </div>
           <div class="form-desc" style="text-align: center; margin-top: 10px;">
@@ -1350,9 +1360,12 @@ const sysInfo = reactive({
   cpu_percent: 0,
   memory_percent: 0,
   memory_used_gb: 0,
+  sys_memory_used_gb: 0,
   memory_total_gb: 0,
   gpu_available: false,
   gpu_name: 'N/A',
+  gpu_memory_used_mb: 0,
+  gpu_memory_total_mb: 0,
   dataset_status: 'checking',
   dataset_size_mb: 0,
   dataset_path: ''
@@ -3311,6 +3324,7 @@ watch(currentTab, (newTab) => {
     window.addEventListener('mousemove', handleMouseMoveGlobal);
     window.addEventListener('blur', handleWindowBlur);
   } else {
+    // 切换到训练页时加载一次系统信息
     fetchSysInfo();
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('keyup', handleKeyUp);
@@ -3319,12 +3333,13 @@ watch(currentTab, (newTab) => {
   }
 });
 
-// 监听训练状态以启停定时器，确保没有训练时只在刷新页面时请求一次
+// 监听训练状态以启停定时器
 watch(isTraining, (newVal) => {
   if (newVal) {
     if (!statusInterval) {
       statusInterval = setInterval(fetchTrainStatus, 1000);
     }
+    // 训练中时同步刷新系统信息（仅训练页可见）
     if (!sysInfoInterval) {
       sysInfoInterval = setInterval(fetchSysInfo, 3000);
     }
