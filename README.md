@@ -16,6 +16,13 @@ sudo firewall-cmd --permanent --add-port=9523/tcp
 sudo firewall-cmd --reload
 ```
 
+服务异常停止，可能需要：
+```
+sudo lsof -i :9523
+sudo ss -lntp | grep python
+kill 对应的pid
+```
+
 ---
 
 ## 📷 界面预览 / Preview
