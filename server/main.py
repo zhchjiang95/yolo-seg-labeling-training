@@ -703,9 +703,10 @@ async def _stop_model_cleanup():
 
 @app.post("/api/labeling/unload_models")
 def unload_models():
-    """手动释放所有已加载的推理模型，立即回收内存"""
+    """手动或页面退出时释放所有已加载的推理模型，立即回收内存"""
     unloaded = predictor.unload_idle_models(timeout=0)
     if unloaded:
+        print(f"[ModelManager] 接收到客户端退出/主动卸载请求，已即时释放模型: {', '.join(unloaded)}")
         return {"status": "success", "message": f"已释放模型: {', '.join(unloaded)}"}
     return {"status": "success", "message": "当前没有已加载的模型"}
 

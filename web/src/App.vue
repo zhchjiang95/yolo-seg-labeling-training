@@ -3308,6 +3308,37 @@ const handleDatasetChange = async (e) => {
   currentDataset.value = newDataset;
 };
 
+// 页面关闭或离开时通知后端即时卸载释放模型（双保险：页面退出即时卸载 + 5分钟空闲兜底）
+let hasUnloadedOnExit = false;
+const unloadModelsOnPageExit = () => {
+  if (hasUnloadedOnExit) return;
+  hasUnloadedOnExit = true;
+  setTimeout(() => { hasUnloadedOnExit = false; }, 3000);
+
+  const url = `${API_BASE}/api/labeling/unload_models`;
+  try {
+    if (navigator.sendBeacon) {
+      // 优先使用 sendBeacon 发送异步 POST 请求，后台保证送达且绝不阻塞页面退出
+      const blob = new Blob(['{}'], { type: 'application/json' });
+      navigator.sendBeacon(url, blob);
+    } else {
+      // 回退使用带 keepalive 的 fetch 请求
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.error('发送模型卸载请求失败:', err);
+  }
+};
+
+// 页面隐藏/销毁事件（现代浏览器关闭标签页或离开的标准生命周期事件）
+const handlePageHide = () => {
+  unloadModelsOnPageExit();
+};
+
 // 浏览器关闭/刷新/历史后退拦截
 const handleBeforeUnload = (e) => {
   if (hasUnsavedChanges.value) {
@@ -3315,6 +3346,8 @@ const handleBeforeUnload = (e) => {
     e.returnValue = ''; // 触发浏览器原生防离开确认框
     return '';
   }
+  // 用户直接关闭页面且无未保存数据时触发卸载
+  unloadModelsOnPageExit();
 };
 
 // ==========================================
@@ -3480,6 +3513,7 @@ onMounted(async () => {
   window.addEventListener('click', closePromptPopoverOnOutside);
   window.addEventListener('click', closeModelPopoverOnOutside);
   window.addEventListener('beforeunload', handleBeforeUnload);
+  window.addEventListener('pagehide', handlePageHide);
   if (currentTab.value === 'label') {
     fetchImageList();
     fetchWorldModelsList();
@@ -3498,10 +3532,14 @@ onUnmounted(() => {
   window.removeEventListener('click', closePromptPopoverOnOutside);
   window.removeEventListener('click', closeModelPopoverOnOutside);
   window.removeEventListener('beforeunload', handleBeforeUnload);
+  window.removeEventListener('pagehide', handlePageHide);
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
   window.removeEventListener('mousemove', handleMouseMoveGlobal);
   window.removeEventListener('blur', handleWindowBlur);
+  
+  // 组件卸载时释放模型
+  unloadModelsOnPageExit();
 });
 
 </script>
