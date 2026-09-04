@@ -161,17 +161,61 @@ class YOLOTrainer:
                 val_ratio=val_r,
                 test_ratio=test_r,
                 seed=42,
-                local_dataset_dir=str(self.workspace_dir / "datasets" / "labeling" / config.get("dataset", "default"))
+                local_dataset_dir=str(self.workspace_dir / "datasets" / "labeling" / config.get("dataset", "default")),
+                force_re_split=config.get("force_re_split", False)
             )
             
             data_yaml_path = split_res["data_yaml"]
             self._write_log(f"[SYSTEM] 数据集自动准备完成！已写入 data.yaml: {data_yaml_path}\n")
 
-            # 提前创建训练结果目录并保存训练元数据（如所用数据集），方便后续空闲时查询
+            # 提前创建训练结果目录并保存训练元数据（如所用数据集、基底模型），方便后续空闲时查询
             save_dir = self.workspace_dir / "runs" / "yolo26s_train"
             save_dir.mkdir(parents=True, exist_ok=True)
+
+            # 2. 查找基础模型权重（优先使用用户选定模型，次选默认 models/segment/yolo26s-seg.pt）
+            model_path = None
+            candidate_paths = []
+            
+            custom_model = config.get("model_path")
+            if custom_model:
+                custom_p = Path(custom_model)
+                if not custom_p.is_absolute():
+                    custom_p = self.workspace_dir / custom_p
+                candidate_paths.append(custom_p)
+                
+            # 兜底候选路径
+            candidate_paths.extend([
+                self.workspace_dir / "models" / "segment" / "yolo26s-seg.pt",
+                self.workspace_dir / "models" / "yolo26s-seg.pt"
+            ])
+
+            for p in candidate_paths:
+                if p.exists() and p.is_file():
+                    model_path = p
+                    break
+
+            if model_path is None:
+                # 若候选路径均不存在，默认回退 models/segment/ 路径并输出警告
+                model_path = self.workspace_dir / "models" / "segment" / "yolo26s-seg.pt"
+                self._write_log(f"[WARNING] 未在指定路径或 models/segment/ 目录下检测到本地权重，Ultralytics 可能会尝试从远程下载！\n")
+            else:
+                try:
+                    display_rel = model_path.relative_to(self.workspace_dir).as_posix()
+                except Exception:
+                    display_rel = str(model_path)
+                self._write_log(f"[SYSTEM] 成功加载基底模型权重: {display_rel}\n")
+
             try:
+                model_name_for_meta = model_path.name
+                try:
+                    model_path_for_meta = model_path.relative_to(self.workspace_dir).as_posix()
+                except Exception:
+                    model_path_for_meta = str(model_path)
+
                 train_meta = {
+                    "model_path": model_path_for_meta,
+                    "model_name": model_name_for_meta,
+                    "force_re_split": config.get("force_re_split", False),
                     "dataset": config.get("dataset", "default"),
                     "epochs": config.get("epochs", 300),
                     "batch": config.get("batch", 4),
@@ -191,33 +235,6 @@ class YOLOTrainer:
                     json.dump(train_meta, f, ensure_ascii=False, indent=4)
             except Exception as e:
                 self._write_log(f"[SYSTEM] 写入 train_meta.json 失败: {str(e)}\n")
-
-            # 2. 查找基础模型权重（优先检索 models/segment/，其次检索 models/ 根目录）
-            model_path = None
-            candidate_paths = [
-                self.workspace_dir / "models" / "segment" / "yolo26s-seg.pt",
-                self.workspace_dir / "models" / "yolo26s-seg.pt"
-            ]
-            
-            # 支持通过 config 传入指定权重路径（若未指定则使用默认候选路径）
-            custom_model = config.get("model_path")
-            if custom_model:
-                custom_p = Path(custom_model)
-                if not custom_p.is_absolute():
-                    custom_p = self.workspace_dir / custom_p
-                candidate_paths.insert(0, custom_p)
-
-            for p in candidate_paths:
-                if p.exists() and p.is_file():
-                    model_path = p
-                    break
-
-            if model_path is None:
-                # 若两处均不存在，默认指定 models/segment/ 路径并输出警告日志
-                model_path = self.workspace_dir / "models" / "segment" / "yolo26s-seg.pt"
-                self._write_log(f"[WARNING] 未在 models/segment/ 或 models/ 目录下检测到本地 yolo26s-seg.pt 权重，Ultralytics 可能会尝试从远程下载！\n")
-            else:
-                self._write_log(f"[SYSTEM] 成功加载本地基础分割模型: {model_path.relative_to(self.workspace_dir).as_posix()}\n")
             
             # 动态生成临时 YOLO 训练运行 Python 脚本
             # 这样做可以避免多平台 CLI 参数传参乱码，且能独立设置 stdout 编码

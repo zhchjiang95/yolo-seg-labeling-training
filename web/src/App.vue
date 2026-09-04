@@ -126,6 +126,32 @@
         </div>
 
         <form @submit.prevent="handleStartTrain">
+          <!-- 基底模型选择 -->
+          <div class="form-group" style="margin-bottom: 18px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label for="train_model_select" style="margin-bottom: 0; font-weight: 600;">基底模型 (Base Model)</label>
+              <button 
+                type="button" 
+                class="refresh-models-btn" 
+                @click="fetchModelsList(true)" 
+                :disabled="isTraining"
+                title="重新扫描并刷新本地权重列表"
+              >
+                <svg style="width: 12px; height: 12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 4v6h-6M1 20v-6h6"/>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+                刷新权重
+              </button>
+            </div>
+            <select id="train_model_select" v-model="form.model_path" class="train-model-select" :disabled="isTraining">
+              <option v-for="model in modelsList" :key="model.path" :value="model.path">
+                {{ model.name }} ({{ model.type === 'trained' ? '训练产物' : (model.type === 'default' ? '默认分割底模' : '内置权重') }})
+              </option>
+            </select>
+            <div class="form-desc">默认使用 yolo26s-seg.pt，亦可自由选用历史产物 (如 best.pt) 开展增量微调</div>
+          </div>
+
           <!-- 基础训练配置 -->
           <div class="form-row-2">
             <div class="form-group">
@@ -165,8 +191,61 @@
           <div class="form-group">
             <label for="split_ratio">数据集划分比例 (Train:Val:Test)</label>
             <input type="text" id="split_ratio" v-model="form.split_ratio" placeholder="8:1:1" required :disabled="isTraining" />
-            <div class="form-desc">训练集、验证集、测试集比例，默认 8:1:1</div>
+            <div class="form-desc">
+              训练集、验证集、测试集比例，默认 8:1:1。
+              <span v-if="!form.force_re_split" style="color: var(--success, #10b981); font-weight: 500;">
+                ✓ 增量固化保护生效中（老图片归属固定，新增图片按比例追加）。
+              </span>
+              <span v-else style="color: #f59e0b; font-weight: 600;">
+                ⚠️ 全局重洗模式已开启（将重置整个数据集的历史划分名单）。
+              </span>
+            </div>
           </div>
+
+          <!-- 强制重新划分 Switch 开关卡片 -->
+          <div class="switch-setting-card">
+            <div class="switch-info">
+              <div class="switch-title">
+                <span>强制重新全局洗牌划分 (Reset Split)</span>
+                <span v-if="form.force_re_split" class="switch-badge-warning">已启用重划</span>
+                <span v-else class="switch-badge-safe">保护锁定中</span>
+              </div>
+              <div class="switch-subtitle">
+                放弃当前记录的 split.json 归属清单，将所有历史与增量图片彻底重新随机分配<span style="color: var(--text-secondary); font-weight: 500;">（首次训练尚未生成清单，无论开闭均无影响）</span>
+              </div>
+            </div>
+            <label class="custom-switch" :class="{ disabled: isTraining }">
+              <input type="checkbox" v-model="form.force_re_split" :disabled="isTraining" />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <!-- 开启 Switch 后的详细 Alert 警告提示卡片 -->
+          <transition name="fade-slide">
+            <div v-if="form.force_re_split" class="split-warning-alert">
+              <div class="alert-header">
+                <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span class="alert-title">高能预警：即将重置所有数据集归属，可能引发数据泄露！</span>
+              </div>
+              <div class="alert-body">
+                <div class="alert-item">
+                  <strong>1. 什么是“虚假高分”（数据泄露 / Data Leakage）？</strong>
+                  若重新随机划分，上一轮训练中模型已经反复学习并“背过答案”的老图片，极大概率会被抽入本次的“新验证集”。如果此时选用 <code>best.pt</code> 继续微调，模型在验证集上就像“开卷考原题”一样取得<strong>虚高的假高分（mAP 虚高）</strong>，但实际推向现场未知场景时效果并不会更好。
+                </div>
+                <div class="alert-item">
+                  <strong>2. 为什么会导致版本间对比失效？</strong>
+                  每次都随机抽签验证集，相当于“每次考试的试卷难度随机变动”。当新版本 mAP 提升时，您将无法确认究竟是“新数据起了作用”还是“这次抽到的考题刚好更简单”。
+                </div>
+                <div class="alert-item tips">
+                  💡 <strong>建议使用场景：</strong>首次训练尚未建立清单，无论开闭均无影响；在后续增量迭代中，仅在您彻底重构了标注、删除了大批图片、或希望彻底从零开始训练时开启。<strong>日常增加新图片微调，强烈建议保持关闭状态！</strong>
+                </div>
+              </div>
+            </div>
+          </transition>
 
           <!-- 数据增强配置 -->
           <div class="section-title" style="margin-top: 30px;">
@@ -1341,6 +1420,7 @@ const currentTab = ref('train'); // train | label
 const isDark = ref(false); // 默认暗色模式
 
 const form = reactive({
+  model_path: 'models/segment/yolo26s-seg.pt',
   epochs: 300,
   batch: 4,
   lr0: 0.001,
@@ -1348,6 +1428,7 @@ const form = reactive({
   imgsz: 960,
   device: '0',
   split_ratio: '8:1:1',
+  force_re_split: false,
   mosaic: 0.5,
   mixup: 0.0,
   copy_paste: 0.3,
@@ -1986,17 +2067,36 @@ const fetchImageList = async () => {
 };
 
 // 获取可用检测模型列表
-const fetchModelsList = async () => {
+const fetchModelsList = async (showToastNotice = false) => {
   try {
     const res = await fetch(`${API_BASE}/api/labeling/models`);
     if (res.ok) {
       modelsList.value = await res.json();
+      
+      // 1. 标注页面选中模型兜底
       if (modelsList.value.length > 0 && !selectedModelPath.value) {
-        selectedModelPath.value = modelsList.value[0].path;
+        const defaultModel = modelsList.value.find(m => m.name.includes('yolo26s-seg') || m.type === 'default');
+        selectedModelPath.value = defaultModel ? defaultModel.path : modelsList.value[0].path;
+      }
+      
+      // 2. 训练配置页面选中模型兜底：优先匹配默认 yolo26s-seg.pt，若当前选中失效则重新寻找
+      if (modelsList.value.length > 0) {
+        const currentSelectedExists = modelsList.value.some(m => m.path === form.model_path);
+        if (!form.model_path || !currentSelectedExists) {
+          const defaultModel = modelsList.value.find(m => m.name.includes('yolo26s-seg') || m.type === 'default');
+          form.model_path = defaultModel ? defaultModel.path : modelsList.value[0].path;
+        }
+      }
+
+      if (showToastNotice) {
+        showToast(`已刷新本地模型权重列表（共 ${modelsList.value.length} 个可用权重）`, 'success');
       }
     }
   } catch (err) {
     console.error('获取权重列表失败:', err);
+    if (showToastNotice) {
+      showToast('获取模型权重列表失败，请检查服务连通性', 'error');
+    }
   }
 };
 
@@ -3324,8 +3424,9 @@ watch(currentTab, (newTab) => {
     window.addEventListener('mousemove', handleMouseMoveGlobal);
     window.addEventListener('blur', handleWindowBlur);
   } else {
-    // 切换到训练页时加载一次系统信息
+    // 切换到训练页时加载系统信息并刷新可用模型列表（呈现最新训练产物）
     fetchSysInfo();
+    fetchModelsList();
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('keyup', handleKeyUp);
     window.removeEventListener('mousemove', handleMouseMoveGlobal);
@@ -3352,6 +3453,8 @@ watch(isTraining, (newVal) => {
       clearInterval(sysInfoInterval);
       sysInfoInterval = null;
     }
+    // 训练结束后自动刷新模型列表，使得最新产出的 best.pt 能够即刻在下拉列表中可选
+    fetchModelsList();
   }
 }, { immediate: true });
 
@@ -3372,13 +3475,13 @@ onMounted(async () => {
 
   fetchSysInfo();
   fetchTrainStatus();
+  fetchModelsList(); // 页面初始化即刻加载可用模型列表
   
   window.addEventListener('click', closePromptPopoverOnOutside);
   window.addEventListener('click', closeModelPopoverOnOutside);
   window.addEventListener('beforeunload', handleBeforeUnload);
   if (currentTab.value === 'label') {
     fetchImageList();
-    fetchModelsList();
     fetchWorldModelsList();
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);

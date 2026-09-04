@@ -3,6 +3,7 @@ import os
 import zipfile
 import shutil
 import random
+import json
 from pathlib import Path
 from typing import Tuple, Dict, Any, List
 
@@ -13,10 +14,12 @@ def split_dataset(
     val_ratio: float = 0.1,
     test_ratio: float = 0.1,
     seed: int = 42,
-    local_dataset_dir: str = None
+    local_dataset_dir: str = None,
+    force_re_split: bool = False
 ) -> Dict[str, Any]:
     """
     解压 ZIP 数据集或直接使用本地已标注目录，按比例划分为 train/val/test 集合，生成 YOLO 格式的数据结构和 data.yaml。
+    支持基于 split.json 的增量固化机制：历史图片的划分保持不变，新增图片自动按比例追加分配，避免评估集数据泄露。
     """
     # 确保比例总和为 1
     total_ratio = train_ratio + val_ratio + test_ratio
@@ -129,22 +132,81 @@ def split_dataset(
             shutil.rmtree(temp_extract_dir)
         raise ValueError("未在 images 目录下找到有效图片文件。")
 
-    # 4. 创建最终的划分子集目录结构
+    # 4. 创建最终的划分子集目录结构（并清空旧文件，避免残留历史文件）
     for split in ['train', 'val', 'test']:
-        (output_dir_obj / split / 'images').mkdir(parents=True, exist_ok=True)
-        (output_dir_obj / split / 'labels').mkdir(parents=True, exist_ok=True)
+        split_img_dir = output_dir_obj / split / 'images'
+        split_lbl_dir = output_dir_obj / split / 'labels'
+        if split_img_dir.exists():
+            shutil.rmtree(split_img_dir)
+        if split_lbl_dir.exists():
+            shutil.rmtree(split_lbl_dir)
+        split_img_dir.mkdir(parents=True, exist_ok=True)
+        split_lbl_dir.mkdir(parents=True, exist_ok=True)
 
-    # 5. 随机洗牌并划分
-    random.shuffle(images_list)
+    # 5. 执行增量固化划分（基于 split.json 保护已有数据，防止评估集泄露）
+    split_meta_file = Path(local_dataset_dir) / "split.json" if use_local else output_dir_obj / "split.json"
+    img_dict = {f.name: f for f in images_list}
+    
+    splits = {'train': [], 'val': [], 'test': []}
+    allocated_names = set()
+    
+    # 若允许读取历史划分且文件存在
+    if split_meta_file.exists() and not force_re_split:
+        try:
+            with open(split_meta_file, 'r', encoding='utf-8') as f:
+                saved_splits = json.load(f)
+            
+            # 优先继承历史老图片的归属，确保其身份绝对固定
+            for split_name in ['train', 'val', 'test']:
+                for fname in saved_splits.get(split_name, []):
+                    if fname in img_dict:
+                        splits[split_name].append(img_dict[fname])
+                        allocated_names.add(fname)
+            print(f"[DatasetSplit] 成功继承历史 split.json 划分: Train={len(splits['train'])}, Val={len(splits['val'])}, Test={len(splits['test'])}")
+        except Exception as e:
+            print(f"[DatasetSplit] 读取历史 split.json 失败或格式不兼容，将全新划分: {e}")
+            splits = {'train': [], 'val': [], 'test': []}
+            allocated_names = set()
+
+    # 找出本次新增的未分配图片
+    unallocated_imgs = [f for f in images_list if f.name not in allocated_names]
+    
+    if unallocated_imgs:
+        random.shuffle(unallocated_imgs)
+        num_new = len(unallocated_imgs)
+        new_train_end = int(num_new * train_ratio)
+        new_val_end = new_train_end + int(num_new * val_ratio)
+        
+        splits['train'].extend(unallocated_imgs[:new_train_end])
+        splits['val'].extend(unallocated_imgs[new_train_end:new_val_end])
+        splits['test'].extend(unallocated_imgs[new_val_end:])
+        
+        if allocated_names:
+            print(f"[DatasetSplit] 检测到 {num_new} 张增量新图片，已按比例分配并追加至各子集 (Train+{new_train_end}, Val+{new_val_end-new_train_end}, Test+{num_new-new_val_end})")
+        else:
+            print(f"[DatasetSplit] 初始划分完成: Train={len(splits['train'])}, Val={len(splits['val'])}, Test={len(splits['test'])}")
+
+    # 持久化当前划分结果至 split.json
+    try:
+        save_data = {
+            'train': [f.name for f in splits['train']],
+            'val': [f.name for f in splits['val']],
+            'test': [f.name for f in splits['test']],
+            'total_count': len(images_list),
+            'train_ratio': train_ratio,
+            'val_ratio': val_ratio,
+            'test_ratio': test_ratio
+        }
+        with open(split_meta_file, 'w', encoding='utf-8') as f:
+            json.dump(save_data, f, ensure_ascii=False, indent=2)
+        # 并在输出训练目录备份一份
+        if use_local and output_dir_obj != Path(local_dataset_dir):
+            with open(output_dir_obj / "split.json", 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[DatasetSplit] 持久化 split.json 失败: {e}")
+
     total_count = len(images_list)
-    train_end = int(total_count * train_ratio)
-    val_end = train_end + int(total_count * val_ratio)
-
-    splits = {
-        'train': images_list[:train_end],
-        'val': images_list[train_end:val_end],
-        'test': images_list[val_end:]
-    }
 
     # 计数信息
     stats = {

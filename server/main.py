@@ -157,6 +157,7 @@ trainer = YOLOTrainer(str(WORKSPACE_DIR))
 
 # 请求体结构校验模型
 class TrainStartRequest(BaseModel):
+    model_path: Optional[str] = Field(default="models/segment/yolo26s-seg.pt", description="训练基础模型权重路径")
     epochs: int = Field(default=300, ge=1, le=10000, description="训练轮次")
     batch: int = Field(default=4, ge=1, le=256, description="批次大小")
     lr0: float = Field(default=0.001, gt=0.0, le=1.0, description="初始学习率")
@@ -165,6 +166,7 @@ class TrainStartRequest(BaseModel):
     device: str = Field(default="0", description="训练设备：cpu, 0, 1, 0,1 等")
     split_ratio: str = Field(default="8:1:1", description="数据集划分比例 (train:val:test)")
     dataset: str = Field(default="default", description="训练选择的数据集")
+    force_re_split: bool = Field(default=False, description="是否强制重新随机划分数据集（若为 False 则沿用历史划分增量追加）")
     # 数据增强配置
     mosaic: float = Field(default=0.5, ge=0.0, le=1.0, description="Mosaic 比例")
     mixup: float = Field(default=0.0, ge=0.0, le=1.0, description="MixUp 比例")
