@@ -16,12 +16,22 @@ sudo firewall-cmd --permanent --add-port=9523/tcp
 sudo firewall-cmd --reload
 ```
 
-服务异常停止，可能需要：
+### 🛠️ 服务启动与运维管理（支持端口自愈与防重复启动）
+
+进入 `server/` 目录：
+```bash
+cd server
+./start.sh    # 启动服务（智能检测：若在运行则跳过；若端口异常残留则自动强制释放并拉起）
+./stop.sh     # 停止服务（包含进程树与端口残留双重清理）
+./restart.sh  # 一键重启服务
 ```
-sudo lsof -i :9523
-sudo ss -lntp | grep python
-kill 对应的pid
-```
+
+> **提示**：如果脚本无 root 权限或遇到极端端口占用，可执行以下命令手动排查释放：
+> ```bash
+> sudo lsof -i :9523
+> sudo ss -lntp | grep python
+> sudo kill -9 对应的PID
+> ```
 
 ---
 

@@ -1422,7 +1422,7 @@ const isDark = ref(false); // 默认暗色模式
 const form = reactive({
   model_path: 'models/segment/yolo26s-seg.pt',
   epochs: 300,
-  batch: 4,
+  batch: 8,
   lr0: 0.001,
   patience: 50,
   imgsz: 960,

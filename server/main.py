@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -76,7 +77,32 @@ def load_server_config() -> Dict[str, Any]:
         print(f"[Config] 加载 config.json 异常，已安全回退默认配置: {e}")
         return default_config
 
-app = FastAPI(title="YOLO26s-seg 训练控制台后端 API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI 现代生命周期上下文管理器：替代已弃用的 @app.on_event("startup"/"shutdown")
+    """
+    global _model_cleanup_task
+    # 服务启动阶段：拉起模型空闲检测与自动卸载任务
+    if "_model_cleanup_loop" in globals():
+        _model_cleanup_task = asyncio.create_task(_model_cleanup_loop())
+        print(f"[ModelManager] 后台模型空闲清理任务已启动 (空闲超时: {MODEL_IDLE_TIMEOUT}s)")
+    try:
+        yield
+    finally:
+        # 服务关闭阶段：取消后台清理协程
+        if _model_cleanup_task:
+            _model_cleanup_task.cancel()
+            try:
+                await _model_cleanup_task
+            except asyncio.CancelledError:
+                pass
+        # 释放所有模型，回收显存与内存
+        if "predictor" in globals():
+            predictor.unload_idle_models(timeout=0)
+        print("[ModelManager] 所有模型已卸载，后台清理任务已停止")
+
+app = FastAPI(title="YOLO26s-seg 训练控制台后端 API", lifespan=lifespan)
 
 # 配置 CORS 允许跨域（前端 Vite 默认端口 5173）
 app.add_middleware(
@@ -681,26 +707,6 @@ async def _model_cleanup_loop():
             predictor.unload_idle_models()
         except Exception as e:
             print(f"[ModelManager] 后台清理异常: {e}")
-
-@app.on_event("startup")
-async def _start_model_cleanup():
-    global _model_cleanup_task
-    _model_cleanup_task = asyncio.create_task(_model_cleanup_loop())
-    print(f"[ModelManager] 后台模型空闲清理任务已启动 (空闲超时: {MODEL_IDLE_TIMEOUT}s)")
-
-@app.on_event("shutdown")
-async def _stop_model_cleanup():
-    global _model_cleanup_task
-    if _model_cleanup_task:
-        _model_cleanup_task.cancel()
-        try:
-            await _model_cleanup_task
-        except asyncio.CancelledError:
-            pass
-    # 关闭时强制释放所有模型
-    predictor.unload_idle_models(timeout=0)
-    print("[ModelManager] 所有模型已卸载，后台清理任务已停止")
-
 @app.post("/api/labeling/unload_models")
 def unload_models():
     """手动或页面退出时释放所有已加载的推理模型，立即回收内存"""
