@@ -371,6 +371,12 @@
               <div class="sys-info-val">{{ sysInfo.sys_memory_used_gb }} / {{ sysInfo.memory_total_gb }} GB</div>
             </div>
             <div class="sys-info-item">
+              <div class="sys-info-label">GPU 显存</div>
+              <div class="sys-info-val" :style="{ color: sysInfo.gpu_available && sysInfo.gpu_memory_total_gb > 0 ? (sysInfo.gpu_memory_percent > 85 ? 'var(--error)' : 'var(--text-primary)') : 'var(--text-muted)' }">
+                {{ sysInfo.gpu_available && sysInfo.gpu_memory_total_gb > 0 ? `${sysInfo.gpu_memory_used_gb} / ${sysInfo.gpu_memory_total_gb} GB` : (sysInfo.gpu_available ? '0.0 GB' : '无 GPU') }}
+              </div>
+            </div>
+            <div class="sys-info-item">
               <div class="sys-info-label">服务进程</div>
               <div class="sys-info-val">{{ sysInfo.memory_used_gb }} GB</div>
             </div>
@@ -387,17 +393,14 @@
               </div>
             </div>
           </div>
-          <div v-if="sysInfo.gpu_available && sysInfo.gpu_memory_total_mb > 0" class="sys-info-row" style="margin-top: 8px;">
-            <div class="sys-info-item" style="flex: 1;">
-              <div class="sys-info-label">GPU 显存</div>
-              <div class="sys-info-val">{{ sysInfo.gpu_memory_used_mb }} / {{ sysInfo.gpu_memory_total_mb }} MB</div>
-            </div>
-          </div>
           <div class="form-desc" style="text-align: center; margin-top: 10px;">
             数据源: {{ sysInfo.dataset_path }}
           </div>
           <div v-if="sysInfo.gpu_available && sysInfo.gpu_name !== 'N/A'" class="form-desc" style="text-align: center; margin-top: 5px;">
             检测到显卡: {{ sysInfo.gpu_name }}
+            <span v-if="sysInfo.gpu_memory_total_gb > 0" style="margin-left: 6px; color: var(--primary);">
+              (显存占用率: {{ sysInfo.gpu_memory_percent }}%)
+            </span>
           </div>
         </div>
       </div>
@@ -757,7 +760,7 @@
                       <label style="font-size: 11px; color: var(--text-secondary); margin-bottom: 5px; display: block;">选择分割权重：</label>
                       <select v-model="selectedModelPath" class="model-popover-select">
                         <option v-for="model in modelsList" :key="model.path" :value="model.path">
-                          {{ model.name }} ({{ model.type === 'trained' ? '训练产物' : '内置权重' }})
+                          {{ model.name }} ({{ model.type === 'trained' ? '训练产物' : '内置权重' }}){{ isModelLoaded(model.path) ? ' · ⚡已载入' : '' }}
                         </option>
                       </select>
                       <div v-if="modelsList.length === 0" style="font-size: 10.5px; color: var(--warning); margin-top: 4px;">
@@ -787,6 +790,43 @@
                         <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
                         <span>{{ isAutoDetectAndRefining ? '识别并优化中...' : '识别并SAM优化' }}</span>
                       </button>
+                    </div>
+
+                    <!-- 显存常驻模型管理 -->
+                    <div class="loaded-models-container">
+                      <div class="loaded-models-header">
+                        <div class="loaded-models-title">
+                          <span class="pulse-dot" :class="{ active: loadedModels.length > 0 }"></span>
+                          <span>常驻显存 ({{ loadedModels.length }}/{{ maxLoadedModels }})</span>
+                        </div>
+                        <div class="loaded-models-controls">
+                          <select v-model.number="maxLoadedModels" @change="handleSetMaxModels" class="max-models-select" title="设置最大允许同时挂载的模型数量">
+                            <option :value="1">上限1个 (即换即清)</option>
+                            <option :value="2">上限2个 (推荐LRU)</option>
+                            <option :value="3">上限3个</option>
+                            <option :value="4">上限4个</option>
+                          </select>
+                          <button v-if="loadedModels.length > 0" class="unload-all-btn" @click="handleUnloadAll" title="清空并释放所有常驻显存的模型">
+                            全部释放
+                          </button>
+                        </div>
+                      </div>
+
+                      <div v-if="loadedModels.length > 0" class="loaded-models-list">
+                        <div v-for="m in loadedModels" :key="m.key" class="loaded-model-chip">
+                          <div class="model-chip-info">
+                            <span class="model-chip-tag" :class="m.type">{{ m.type_display }}</span>
+                            <span class="model-chip-name" :title="m.path">{{ m.name }}</span>
+                          </div>
+                          <div class="model-chip-right">
+                            <span class="model-chip-time" :title="`最后使用: ${m.idle_seconds} 秒前`">{{ formatIdleTime(m.idle_seconds) }}</span>
+                            <button class="model-chip-del" @click.stop="handleUnloadSpecific(m.key)" title="指定释放该模型显存">✕</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="loaded-models-empty">
+                        暂无常驻模型（执行识别时将自动按需加载）
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -827,7 +867,7 @@
                       <label style="font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; display: block;">选择世界模型：</label>
                       <select v-model="selectedWorldModelPath" class="model-popover-select" style="width: 100%;">
                         <option v-for="model in worldModelsList" :key="model.path" :value="model.path">
-                          {{ model.name }} ({{ model.type === 'extra' ? '外部目录' : (model.type === 'custom' ? '本地权重' : '默认模型') }})
+                          {{ model.name }} ({{ model.type === 'extra' ? '外部目录' : (model.type === 'custom' ? '本地权重' : '默认模型') }}){{ isModelLoaded(model.path) ? ' · ⚡已载入' : '' }}
                         </option>
                       </select>
                     </div>
@@ -894,6 +934,43 @@
                         <span v-else style="font-size: 11px; margin-right: 2px;">✨</span>
                         <span>{{ isPromptDetectAndRefining ? '识别并优化中...' : '识别并SAM优化' }}</span>
                       </button>
+                    </div>
+
+                    <!-- 显存常驻模型管理 -->
+                    <div class="loaded-models-container">
+                      <div class="loaded-models-header">
+                        <div class="loaded-models-title">
+                          <span class="pulse-dot" :class="{ active: loadedModels.length > 0 }"></span>
+                          <span>常驻显存 ({{ loadedModels.length }}/{{ maxLoadedModels }})</span>
+                        </div>
+                        <div class="loaded-models-controls">
+                          <select v-model.number="maxLoadedModels" @change="handleSetMaxModels" class="max-models-select" title="设置最大允许同时挂载的模型数量">
+                            <option :value="1">上限1个 (即换即清)</option>
+                            <option :value="2">上限2个 (推荐LRU)</option>
+                            <option :value="3">上限3个</option>
+                            <option :value="4">上限4个</option>
+                          </select>
+                          <button v-if="loadedModels.length > 0" class="unload-all-btn" @click="handleUnloadAll" title="清空并释放所有常驻显存的模型">
+                            全部释放
+                          </button>
+                        </div>
+                      </div>
+
+                      <div v-if="loadedModels.length > 0" class="loaded-models-list">
+                        <div v-for="m in loadedModels" :key="m.key" class="loaded-model-chip">
+                          <div class="model-chip-info">
+                            <span class="model-chip-tag" :class="m.type">{{ m.type_display }}</span>
+                            <span class="model-chip-name" :title="m.path">{{ m.name }}</span>
+                          </div>
+                          <div class="model-chip-right">
+                            <span class="model-chip-time" :title="`最后使用: ${m.idle_seconds} 秒前`">{{ formatIdleTime(m.idle_seconds) }}</span>
+                            <button class="model-chip-del" @click.stop="handleUnloadSpecific(m.key)" title="指定释放该模型显存">✕</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="loaded-models-empty">
+                        暂无常驻模型（执行识别时将自动按需加载）
+                      </div>
                     </div>
                   </div>
                   <div class="popover-arrow"></div>
@@ -1445,6 +1522,9 @@ const sysInfo = reactive({
   memory_total_gb: 0,
   gpu_available: false,
   gpu_name: 'N/A',
+  gpu_memory_used_gb: 0,
+  gpu_memory_total_gb: 0,
+  gpu_memory_percent: 0,
   gpu_memory_used_mb: 0,
   gpu_memory_total_mb: 0,
   dataset_status: 'checking',
@@ -1756,7 +1836,102 @@ const activePolyIndex = ref(null);
 const pendingDeletePolyIndex = ref(null);
 let pendingDeleteTimer = null;
 const modelsList = ref([]); // 后端扫描出的 YOLO-seg 模型列表
-const selectedModelPath = ref(''); // 当前选中的模型路径
+// 已常驻显存/内存的模型列表与挂载上限管理
+const loadedModels = ref([]); // [{key, name, type, type_display, path, loaded_at, last_used_at, idle_seconds}]
+const maxLoadedModels = ref(2); // 允许同时挂载的最大模型数量 (默认 2，LRU 循环淘汰)
+
+// 判断指定路径的模型当前是否已在显存中
+const isModelLoaded = (modelPath) => {
+  if (!modelPath) return false;
+  const p = modelPath.trim().toLowerCase();
+  return loadedModels.value.some(m => {
+    const mp = (m.path || '').toLowerCase();
+    const mk = (m.key || '').toLowerCase();
+    return mp === p || mp.endsWith(p) || mk.includes(p) || (m.name && m.name.toLowerCase() === p.split('/').pop());
+  });
+};
+
+// 友好格式化空闲时间
+const formatIdleTime = (sec) => {
+  if (sec == null || sec < 5) return '活跃中';
+  if (sec < 60) return `${sec}s前`;
+  return `${Math.floor(sec / 60)}m前`;
+};
+
+// 查询当前常驻显存的模型列表
+const fetchLoadedModels = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/loaded_models`);
+    if (res.ok) {
+      const data = await res.json();
+      loadedModels.value = data.models || [];
+      if (data.max_loaded_models) {
+        maxLoadedModels.value = data.max_loaded_models;
+      }
+    }
+  } catch (err) {
+    console.error('获取已挂载模型失败:', err);
+  }
+};
+
+// 指定卸载某个模型
+const handleUnloadSpecific = async (modelKey) => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/unload_specific_model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_key: modelKey })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      loadedModels.value = data.models || [];
+      if (data.max_loaded_models) {
+        maxLoadedModels.value = data.max_loaded_models;
+      }
+      showToast(data.message || '模型已成功卸载释放', 'success');
+      fetchSysInfo();
+    }
+  } catch (err) {
+    showToast('卸载模型失败: ' + err.message, 'error');
+  }
+};
+
+// 释放全部已挂载模型
+const handleUnloadAll = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/unload_models`, {
+      method: 'POST'
+    });
+    if (res.ok) {
+      const data = await res.json();
+      loadedModels.value = [];
+      showToast(data.message || '已释放所有常驻模型', 'success');
+      fetchSysInfo();
+    }
+  } catch (err) {
+    showToast('释放模型失败: ' + err.message, 'error');
+  }
+};
+
+// 动态调整最大挂载数量
+const handleSetMaxModels = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/set_max_loaded_models`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ max_models: maxLoadedModels.value })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      loadedModels.value = data.models || [];
+      showToast(data.message || `挂载上限已设置为 ${maxLoadedModels.value} 个`, 'info');
+      fetchSysInfo();
+    }
+  } catch (err) {
+    showToast('设置挂载上限失败: ' + err.message, 'error');
+  }
+};
+
 const showModelPopover = ref(false); // 控制模型识别 Popover 的显隐
 const isAutoDetectAndRefining = ref(false); // 是否处于“识别并优化”执行中
 
@@ -1764,6 +1939,7 @@ const toggleModelPopover = () => {
   showModelPopover.value = !showModelPopover.value;
   if (showModelPopover.value) {
     showPromptPopover.value = false;
+    fetchLoadedModels();
     if (!selectedModelPath.value && modelsList.value.length > 0) {
       selectedModelPath.value = modelsList.value[0].path;
     }
@@ -1873,6 +2049,7 @@ const togglePromptPopover = () => {
   showPromptPopover.value = !showPromptPopover.value;
   if (showPromptPopover.value) {
     showModelPopover.value = false;
+    fetchLoadedModels();
     if (!selectedWorldModelPath.value && worldModelsList.value.length > 0) {
       selectedWorldModelPath.value = worldModelsList.value[0].path;
     }
@@ -2737,6 +2914,8 @@ const handleDetectAndRefine = async () => {
     showToast('连接识别或 SAM 服务异常', 'error');
   } finally {
     isAutoDetectAndRefining.value = false;
+    fetchLoadedModels();
+    fetchSysInfo();
   }
 };
 
@@ -2779,6 +2958,8 @@ const autoDetect = async (modelPath = null) => {
     showToast('连接识别服务异常', 'error');
   } finally {
     isAutoDetecting.value = false;
+    fetchLoadedModels();
+    fetchSysInfo();
   }
 };
 
@@ -2859,6 +3040,8 @@ const promptDetect = async (useSam = true) => {
   } finally {
     isPromptDetecting.value = false;
     isPromptDetectAndRefining.value = false;
+    fetchLoadedModels();
+    fetchSysInfo();
   }
 };
 
@@ -3452,6 +3635,7 @@ watch(currentTab, (newTab) => {
     fetchClasses();
     fetchModelsList();
     fetchWorldModelsList();
+    fetchLoadedModels();
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMoveGlobal);
@@ -3509,6 +3693,7 @@ onMounted(async () => {
   fetchSysInfo();
   fetchTrainStatus();
   fetchModelsList(); // 页面初始化即刻加载可用模型列表
+  fetchLoadedModels(); // 初始化常驻模型列表
   
   window.addEventListener('click', closePromptPopoverOnOutside);
   window.addEventListener('click', closeModelPopoverOnOutside);
@@ -3517,6 +3702,7 @@ onMounted(async () => {
   if (currentTab.value === 'label') {
     fetchImageList();
     fetchWorldModelsList();
+    fetchLoadedModels();
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMoveGlobal);

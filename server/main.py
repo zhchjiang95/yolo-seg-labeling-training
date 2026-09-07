@@ -316,29 +316,81 @@ def get_sysinfo(dataset: str = "default"):
     proc_mem_used_gb = round(proc_mem.rss / (1024 ** 3), 2)
     sys_memory = psutil.virtual_memory()
     
+    # 2. GPU 显存与硬件信息精准采集
     gpu_available = False
     gpu_name = "N/A"
-    gpu_memory_used_mb = 0
-    gpu_memory_total_mb = 0
-    
+    gpu_memory_used_gb = 0.0
+    gpu_memory_total_gb = 0.0
+    gpu_memory_percent = 0.0
+    gpu_memory_used_mb = 0.0
+    gpu_memory_total_mb = 0.0
+
+    # 优先方案：通过 PyTorch 的 CUDA 驱动底层接口获取整卡物理显存
     try:
         import torch
         gpu_available = torch.cuda.is_available()
         if gpu_available:
             gpu_name = torch.cuda.get_device_name(0)
-            gpu_memory_used_mb = round(torch.cuda.memory_allocated(0) / (1024 ** 2), 1)
-            gpu_memory_total_mb = round(torch.cuda.get_device_properties(0).total_mem / (1024 ** 2), 1)
+            try:
+                # mem_get_info 返回 (free_bytes, total_bytes)，反映整张显卡真实物理显存
+                # 能真实统计训练子进程、推理进程以及后台任务的显存占用
+                free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+                used_bytes = max(0, total_bytes - free_bytes)
+
+                gpu_memory_total_gb = round(total_bytes / (1024 ** 3), 2)
+                gpu_memory_used_gb = round(used_bytes / (1024 ** 3), 2)
+                gpu_memory_percent = round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0.0
+
+                gpu_memory_used_mb = round(used_bytes / (1024 ** 2), 1)
+                gpu_memory_total_mb = round(total_bytes / (1024 ** 2), 1)
+            except Exception:
+                # 兜底：使用 PyTorch 设备属性总显存与分配/保留显存
+                total_mem = torch.cuda.get_device_properties(0).total_mem
+                alloc_mem = torch.cuda.memory_allocated(0)
+                reserved_mem = torch.cuda.memory_reserved(0)
+                used_mem = max(alloc_mem, reserved_mem)
+
+                gpu_memory_total_gb = round(total_mem / (1024 ** 3), 2)
+                gpu_memory_used_gb = round(used_mem / (1024 ** 3), 2)
+                gpu_memory_percent = round((used_mem / total_mem) * 100, 1) if total_mem > 0 else 0.0
+
+                gpu_memory_used_mb = round(used_mem / (1024 ** 2), 1)
+                gpu_memory_total_mb = round(total_mem / (1024 ** 2), 1)
     except Exception:
         pass
 
-    # 2. 数据集状态判定 (zip 或者是本地标注目录)
+    # 兜底方案：如果 PyTorch 未能识别到 CUDA，但系统有 NVIDIA 驱动与 nvidia-smi
+    if not gpu_available:
+        try:
+            import subprocess
+            res = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,memory.used,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=1
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                first_line = res.stdout.strip().split("\n")[0]
+                parts = [p.strip() for p in first_line.split(",")]
+                if len(parts) >= 3:
+                    gpu_name = parts[0]
+                    used_mb = float(parts[1])
+                    total_mb = float(parts[2])
+                    gpu_available = True
+                    gpu_memory_used_mb = round(used_mb, 1)
+                    gpu_memory_total_mb = round(total_mb, 1)
+                    gpu_memory_used_gb = round(used_mb / 1024, 2)
+                    gpu_memory_total_gb = round(total_mb / 1024, 2)
+                    gpu_memory_percent = round((used_mb / total_mb) * 100, 1) if total_mb > 0 else 0.0
+        except Exception:
+            pass
+
+    # 3. 数据集状态判定 (zip 或者是本地标注目录)
     zip_file = WORKSPACE_DIR / "datasets" / "赶猪通道图集_yolo.zip"
     local_img_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images"
-    
+
     dataset_status = "missing"
     dataset_size_mb = 0.0
     dataset_path_str = "无"
-    
+
     # 检查本地标注图片数
     local_images_count = 0
     if local_img_dir.exists():
@@ -361,6 +413,9 @@ def get_sysinfo(dataset: str = "default"):
         "memory_total_gb": round(sys_memory.total / (1024 ** 3), 2),
         "gpu_available": gpu_available,
         "gpu_name": gpu_name,
+        "gpu_memory_used_gb": gpu_memory_used_gb,
+        "gpu_memory_total_gb": gpu_memory_total_gb,
+        "gpu_memory_percent": gpu_memory_percent,
         "gpu_memory_used_mb": gpu_memory_used_mb,
         "gpu_memory_total_mb": gpu_memory_total_mb,
         "dataset_status": dataset_status,
@@ -426,24 +481,179 @@ MODEL_IDLE_TIMEOUT = int(os.environ.get("MODEL_IDLE_TIMEOUT", 300))
 class LabelingPredictor:
     def __init__(self, workspace_dir: Path):
         self.workspace_dir = workspace_dir
-        self.yolo_models = {}        # 缓存已加载的 YOLO 分割模型: path_str -> model
-        self.yolo_world_models = {}  # 缓存已加载的 YOLO-World 开放词汇模型: path_str -> model
+        # 最大允许同时常驻显存/内存的模型数量（默认 2 个）
+        # 设置为 1 时即为“单模型独占模式（每次换新模型自动清旧模型）”；
+        # 设置为 2 时即为“LRU 缓存模式（最多常驻 2 个，超出自动踢出最久未使用的模型）”
+        self.max_loaded_models = 2
+
+        # 统一模型注册表：key -> Dict[str, Any]
+        # key 格式形如：'yolo_seg:/abs/path', 'yolo_world:/abs/path', 'sam:/abs/path', 'sam3:/abs/path'
+        self.loaded_models: Dict[str, Dict[str, Any]] = {}
+
+        # 兼容旧属性结构
+        self.yolo_models = {}
+        self.yolo_world_models = {}
         self.sam_model = None
-        self.sam3_models = {}        # 缓存已加载的 SAM 3 文本推理模型: path_str -> model
-        # 各模型类型的最后使用时间戳
+        self.sam3_models = {}
         self._last_used = {
-            "yolo": 0.0,       # YOLO-seg 自动检测
-            "yolo_world": 0.0, # YOLO-World Prompt 识别
-            "sam": 0.0,        # SAM 辅助标注
-            "sam3": 0.0,       # SAM 3 文本词汇识别
+            "yolo": 0.0,
+            "yolo_world": 0.0,
+            "sam": 0.0,
+            "sam3": 0.0,
         }
 
     def _touch(self, model_type: str):
         """更新指定模型类型的最后使用时间"""
         self._last_used[model_type] = time.time()
 
+    def _ensure_capacity(self, upcoming_key: str):
+        """
+        准备挂载容量：若即将加载的模型不在当前缓存中，且当前挂载数已达上限，
+        则依据 LRU（最近最少使用）算法自动淘汰并卸载最久未访问的模型。
+        """
+        if upcoming_key in self.loaded_models:
+            return  # 命中缓存，无需淘汰
+
+        while len(self.loaded_models) >= self.max_loaded_models:
+            # 找到 last_used_at 最小的条目（即最久未使用的模型）
+            lru_key = min(self.loaded_models.keys(), key=lambda k: self.loaded_models[k].get("last_used_at", 0))
+            lru_entry = self.loaded_models[lru_key]
+            print(f"[ModelManager] 达到最大挂载上限 ({self.max_loaded_models})，触发 LRU 自动淘汰释放: {lru_entry['name']} ({lru_entry['type_display']})")
+            self.unload_model_by_key(lru_key)
+
+    def _register_model(self, key: str, name: str, model_type: str, type_display: str, path: str, instance: Any):
+        """将新加载的模型注册进统一模型管理器并同步更新时间戳"""
+        now = time.time()
+        self.loaded_models[key] = {
+            "key": key,
+            "name": name,
+            "type": model_type,
+            "type_display": type_display,
+            "path": path,
+            "instance": instance,
+            "loaded_at": now,
+            "last_used_at": now
+        }
+        # 同步兼容旧属性
+        if model_type == "yolo_seg":
+            self.yolo_models[path] = instance
+        elif model_type == "yolo_world":
+            self.yolo_world_models[path] = instance
+        elif model_type == "sam":
+            self.sam_model = instance
+        elif model_type == "sam3":
+            self.sam3_models[path] = instance
+        self._touch(model_type)
+
+    def touch_model(self, key: str):
+        """刷新模型访问时间"""
+        if key in self.loaded_models:
+            self.loaded_models[key]["last_used_at"] = time.time()
+            self._touch(self.loaded_models[key]["type"])
+
+    def unload_model_by_key(self, key: str) -> Optional[Dict[str, Any]]:
+        """按 key 卸载单个模型，释放对象引用并执行显存/内存物理回收"""
+        if key not in self.loaded_models:
+            return None
+
+        entry = self.loaded_models.pop(key)
+        path = entry.get("path", "")
+        mtype = entry.get("type", "")
+
+        # 释放实例
+        if "instance" in entry:
+            del entry["instance"]
+
+        # 同步清理旧结构
+        if mtype == "yolo_seg":
+            self.yolo_models.pop(path, None)
+        elif mtype == "yolo_world":
+            self.yolo_world_models.pop(path, None)
+            self.yolo_world_models.pop("__default__", None)
+        elif mtype == "sam":
+            self.sam_model = None
+        elif mtype == "sam3":
+            self.sam3_models.pop(path, None)
+
+        # 显式垃圾回收与清空 CUDA 缓存
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+        print(f"[ModelManager] 已卸载模型: {entry['name']} ({entry['type_display']})")
+        return entry
+
+    def unload_idle_models(self, timeout: int = None) -> List[str]:
+        """
+        卸载超过空闲超时的模型。
+        timeout 为 None 时使用全局 MODEL_IDLE_TIMEOUT（默认 300 秒）。
+        timeout 为 0 时强制卸载全部模型。
+        """
+        if timeout is None:
+            timeout = MODEL_IDLE_TIMEOUT
+
+        now = time.time()
+        keys_to_unload = []
+        for k, m in list(self.loaded_models.items()):
+            idle = now - m.get("last_used_at", 0)
+            if timeout == 0 or idle > timeout:
+                keys_to_unload.append(k)
+
+        unloaded_names = []
+        for k in keys_to_unload:
+            entry = self.unload_model_by_key(k)
+            if entry:
+                idle_sec = int(now - entry.get("last_used_at", now))
+                unloaded_names.append(f"{entry['name']} (空闲 {idle_sec}s)")
+
+        return unloaded_names
+
+    def get_loaded_models_list(self) -> List[Dict[str, Any]]:
+        """获取当前已挂载的模型列表（包含空闲时间和类型）"""
+        now = time.time()
+        result = []
+        for k, m in self.loaded_models.items():
+            idle = int(now - m.get("last_used_at", now))
+            result.append({
+                "key": m["key"],
+                "name": m["name"],
+                "type": m["type"],
+                "type_display": m["type_display"],
+                "path": m["path"],
+                "loaded_at": m["loaded_at"],
+                "last_used_at": m["last_used_at"],
+                "idle_seconds": idle
+            })
+        result.sort(key=lambda x: x["last_used_at"], reverse=True)
+        return result
+
+    def set_max_loaded_models(self, max_models: int) -> int:
+        """设置最大允许同时挂载的模型数量"""
+        self.max_loaded_models = max(1, min(10, max_models))
+        # 若调小容量后已加载数超出，立即按 LRU 顺序驱逐多余模型
+        while len(self.loaded_models) > self.max_loaded_models:
+            lru_key = min(self.loaded_models.keys(), key=lambda k: self.loaded_models[k].get("last_used_at", 0))
+            self.unload_model_by_key(lru_key)
+        return self.max_loaded_models
+
+    def get_loaded_info(self) -> Dict[str, Any]:
+        """兼容旧版状态查询接口"""
+        now = time.time()
+        info = {}
+        for m in self.loaded_models.values():
+            mtype = m["type"]
+            info[mtype] = {
+                "loaded": True,
+                "name": m["name"],
+                "idle_seconds": int(now - m.get("last_used_at", now))
+            }
+        return info
+
     def get_yolo_world_model(self, custom_path: str = None):
-        self._touch("yolo_world")
         from ultralytics import YOLOWorld
 
         # 1. 若指定了模型路径
@@ -453,80 +663,107 @@ class LabelingPredictor:
                 full_path = (self.workspace_dir / path_obj).resolve()
             else:
                 full_path = path_obj.resolve()
-            
+
             full_path_str = str(full_path)
-            if full_path_str not in self.yolo_world_models:
-                if not full_path.exists():
-                    raise FileNotFoundError(f"指定的世界模型权重不存在: {full_path.name}")
-                
-                # 兼容性防御：若为 .pth 文件且非 Ultralytics 格式（如 countgd）
-                if full_path.suffix.lower() == ".pth":
-                    try:
-                        print(f"[YOLOWorld] 正在加载世界模型权重: {full_path.name}")
-                        self.yolo_world_models[full_path_str] = YOLOWorld(full_path_str)
-                    except Exception as load_err:
-                        raise RuntimeError(
-                            f"无法直接通过 Ultralytics 加载权重 '{full_path.name}' ({load_err})。"
-                            f"若该模型为 CountGD / Grounding DINO 结构，需要安装相应的模型定义库。"
-                        )
-                else:
+            model_key = f"yolo_world:{full_path_str}"
+            model_name = full_path.name
+
+            if model_key in self.loaded_models:
+                self.touch_model(model_key)
+                return self.loaded_models[model_key]["instance"]
+
+            if not full_path.exists():
+                raise FileNotFoundError(f"指定的世界模型权重不存在: {full_path.name}")
+
+            self._ensure_capacity(model_key)
+
+            if full_path.suffix.lower() == ".pth":
+                try:
                     print(f"[YOLOWorld] 正在加载世界模型权重: {full_path.name}")
-                    self.yolo_world_models[full_path_str] = YOLOWorld(full_path_str)
-            return self.yolo_world_models[full_path_str]
+                    model = YOLOWorld(full_path_str)
+                except Exception as load_err:
+                    raise RuntimeError(
+                        f"无法直接通过 Ultralytics 加载权重 '{full_path.name}' ({load_err})。"
+                        f"若该模型为 CountGD / Grounding DINO 结构，需要安装相应的模型定义库。"
+                    )
+            else:
+                print(f"[YOLOWorld] 正在加载世界模型权重: {full_path.name}")
+                model = YOLOWorld(full_path_str)
+
+            self._register_model(model_key, model_name, "yolo_world", "YOLO-World", full_path_str, model)
+            return model
 
         # 2. 默认模型查找策略
-        default_key = "__default__"
-        if default_key not in self.yolo_world_models:
-            candidate_names = [
-                "yolov8m-worldv2.pt",
-                "yolov8s-worldv2.pt",
-                "yolov8l-worldv2.pt",
-                "yolov8x-worldv2.pt",
-                "yolov8m-world.pt",
-                "yolov8s-world.pt",
-                "yolov8l-world.pt",
-                "yolov8x-world.pt"
-            ]
-            found_path = None
-            models_dir = self.workspace_dir / "models"
-            world_sub_dir = models_dir / "world"
-            for name in candidate_names:
-                # 优先检索 models/world/ 子目录，再检索 models/ 根目录
-                p_sub = world_sub_dir / name
-                if p_sub.exists():
-                    found_path = p_sub
-                    break
-                p = models_dir / name
-                if p.exists():
-                    found_path = p
-                    break
-            
-            if found_path:
-                print(f"[YOLOWorld] 正在加载本地已下载权重: {found_path.name}")
-                self.yolo_world_models[default_key] = YOLOWorld(str(found_path))
-            else:
-                # 若无本地权重，退回默认名称
-                print("[YOLOWorld] 未在 models/ 或 models/world/ 目录下找到本地 YOLO-World 权重，将尝试网络在线加载/下载 yolov8m-worldv2.pt...")
-                self.yolo_world_models[default_key] = YOLOWorld("yolov8m-worldv2.pt")
-        return self.yolo_world_models[default_key]
+        default_key = "yolo_world:__default__"
+        if default_key in self.loaded_models:
+            self.touch_model(default_key)
+            return self.loaded_models[default_key]["instance"]
+
+        candidate_names = [
+            "yolov8m-worldv2.pt",
+            "yolov8s-worldv2.pt",
+            "yolov8l-worldv2.pt",
+            "yolov8x-worldv2.pt",
+            "yolov8m-world.pt",
+            "yolov8s-world.pt",
+            "yolov8l-world.pt",
+            "yolov8x-world.pt"
+        ]
+        found_path = None
+        models_dir = self.workspace_dir / "models"
+        world_sub_dir = models_dir / "world"
+        for name in candidate_names:
+            p_sub = world_sub_dir / name
+            if p_sub.exists():
+                found_path = p_sub
+                break
+            p = models_dir / name
+            if p.exists():
+                found_path = p
+                break
+
+        self._ensure_capacity(default_key)
+        if found_path:
+            print(f"[YOLOWorld] 正在加载本地已下载权重: {found_path.name}")
+            model = YOLOWorld(str(found_path))
+            model_name = found_path.name
+            path_str = str(found_path.resolve())
+        else:
+            print("[YOLOWorld] 未在 models/ 或 models/world/ 目录下找到本地 YOLO-World 权重，将尝试网络在线加载/下载 yolov8m-worldv2.pt...")
+            model = YOLOWorld("yolov8m-worldv2.pt")
+            model_name = "yolov8m-worldv2.pt"
+            path_str = "yolov8m-worldv2.pt"
+
+        self._register_model(default_key, model_name, "yolo_world", "YOLO-World", path_str, model)
+        return model
 
     def get_yolo_model(self, custom_path: str = None):
-        self._touch("yolo")
+        from ultralytics import YOLO
+
         # 1. 如果传入了特定模型路径
         if custom_path:
             path_obj = Path(custom_path)
             if not path_obj.is_absolute():
-                full_path = self.workspace_dir / path_obj
+                full_path = (self.workspace_dir / path_obj).resolve()
             else:
-                full_path = path_obj
-            
-            full_path_str = str(full_path.resolve())
-            if full_path_str not in self.yolo_models:
-                if not full_path.exists():
-                    raise FileNotFoundError(f"指定的模型权重不存在: {full_path.name}")
-                from ultralytics import YOLO
-                self.yolo_models[full_path_str] = YOLO(full_path_str)
-            return self.yolo_models[full_path_str]
+                full_path = path_obj.resolve()
+
+            full_path_str = str(full_path)
+            model_key = f"yolo_seg:{full_path_str}"
+            model_name = full_path.name
+
+            if model_key in self.loaded_models:
+                self.touch_model(model_key)
+                return self.loaded_models[model_key]["instance"]
+
+            if not full_path.exists():
+                raise FileNotFoundError(f"指定的模型权重不存在: {full_path.name}")
+
+            self._ensure_capacity(model_key)
+            print(f"[YOLO-seg] 正在加载分割模型权重: {model_name}")
+            model = YOLO(full_path_str)
+            self._register_model(model_key, model_name, "yolo_seg", "YOLO分割", full_path_str, model)
+            return model
 
         # 2. 默认模型加载逻辑
         best_pt = None
@@ -535,164 +772,103 @@ class LabelingPredictor:
             if p.exists():
                 best_pt = p
                 break
-                
+
         if best_pt:
             default_path = best_pt
         else:
-            # 优先查找 models/segment/yolo26s-seg.pt，再查找 models/yolo26s-seg.pt
             seg_path = self.workspace_dir / "models" / "segment" / "yolo26s-seg.pt"
             if seg_path.exists():
                 default_path = seg_path
             else:
                 default_path = self.workspace_dir / "models" / "yolo26s-seg.pt"
-        
+
         default_path_str = str(default_path.resolve())
-        if default_path_str not in self.yolo_models:
-            if not default_path.exists():
-                raise FileNotFoundError(f"默认模型权重不存在: {default_path.name}")
-            from ultralytics import YOLO
-            self.yolo_models[default_path_str] = YOLO(default_path_str)
-        return self.yolo_models[default_path_str]
+        model_key = f"yolo_seg:{default_path_str}"
+        model_name = default_path.name
+
+        if model_key in self.loaded_models:
+            self.touch_model(model_key)
+            return self.loaded_models[model_key]["instance"]
+
+        if not default_path.exists():
+            raise FileNotFoundError(f"默认模型权重不存在: {default_path.name}")
+
+        self._ensure_capacity(model_key)
+        print(f"[YOLO-seg] 正在加载默认分割模型权重: {model_name}")
+        model = YOLO(default_path_str)
+        self._register_model(model_key, model_name, "yolo_seg", "YOLO分割", default_path_str, model)
+        return model
 
     def get_sam_model(self):
-        self._touch("sam")
-        if self.sam_model is None:
-            sam_names = [
-                "sam2.1_b.pt", 
-                "sam3.1_multiplex.pt", 
-                "sam3.1.pt", 
-                "sam3.pt", 
-                "sam_b.pt", 
-                "mobile_sam.pt", 
-                "sam2.1_t.pt"
-            ]
-            found_path = None
-            models_dir = self.workspace_dir / "models"
-            sam_sub_dir = models_dir / "sam"
-            for name in sam_names:
-                # 优先检索 models/sam/ 子目录，再检索 models/ 根目录
-                p_sub = sam_sub_dir / name
-                if p_sub.exists():
-                    found_path = p_sub
-                    break
-                p = models_dir / name
-                if p.exists():
-                    found_path = p
-                    break
-            if found_path is None:
-                raise FileNotFoundError("未在 models/ 或 models/sam/ 目录下检测到 SAM 权重 (例如 sam3.1_multiplex.pt、sam3.pt、sam2.1_b.pt、mobile_sam.pt)。")
-            
-            from ultralytics import SAM
-            self.sam_model = SAM(str(found_path))
-        return self.sam_model
+        from ultralytics import SAM
+        sam_names = [
+            "sam2.1_b.pt", 
+            "sam3.1_multiplex.pt", 
+            "sam3.1.pt", 
+            "sam3.pt", 
+            "sam_b.pt", 
+            "mobile_sam.pt", 
+            "sam2.1_t.pt"
+        ]
+        found_path = None
+        models_dir = self.workspace_dir / "models"
+        sam_sub_dir = models_dir / "sam"
+        for name in sam_names:
+            p_sub = sam_sub_dir / name
+            if p_sub.exists():
+                found_path = p_sub
+                break
+            p = models_dir / name
+            if p.exists():
+                found_path = p
+                break
+        if found_path is None:
+            raise FileNotFoundError("未在 models/ 或 models/sam/ 目录下检测到 SAM 权重 (例如 sam3.1_multiplex.pt、sam3.pt、sam2.1_b.pt、mobile_sam.pt)。")
+
+        full_path_str = str(found_path.resolve())
+        model_key = f"sam:{full_path_str}"
+        model_name = found_path.name
+
+        if model_key in self.loaded_models:
+            self.touch_model(model_key)
+            return self.loaded_models[model_key]["instance"]
+
+        self._ensure_capacity(model_key)
+        print(f"[SAM] 正在加载 SAM 辅助分割权重: {model_name}")
+        model = SAM(str(found_path))
+        self._register_model(model_key, model_name, "sam", "SAM辅助分割", full_path_str, model)
+        return model
 
     def get_sam3_model(self, model_path: str):
-        """加载并缓存 SAM 3 文本推理模型（Semantic 模型，支持 Promptable Concept Segmentation）"""
-        self._touch("sam3")
         import torch
         from ultralytics.models.sam.build_sam3 import build_sam3_image_model
-        
+
         path_obj = Path(model_path.strip())
         if not path_obj.is_absolute():
             full_path = (self.workspace_dir / path_obj).resolve()
         else:
             full_path = path_obj.resolve()
-        
+
         full_path_str = str(full_path)
-        if full_path_str not in self.sam3_models:
-            if not full_path.exists():
-                raise FileNotFoundError(f"指定的 SAM 3 模型权重不存在: {full_path.name}")
-            print(f"[SAM3] 正在加载 SAM 3 文本推理(Semantic)模型: {full_path.name}")
-            
-            # 使用 build_sam3_image_model 而不是通用的 SAM()，以获取具有 backbone 属性的语义分割专用模型
-            device = "cuda:0" if torch.cuda.is_available() else "cpu"
-            model = build_sam3_image_model(full_path_str)
-            model.to(device)
-            model.eval()
-            
-            self.sam3_models[full_path_str] = model
-        return self.sam3_models[full_path_str]
+        model_key = f"sam3:{full_path_str}"
+        model_name = full_path.name
 
-    def unload_idle_models(self, timeout: int = None):
-        """
-        卸载超过空闲超时时间的模型，释放 CPU/GPU 内存。
-        timeout 为 None 时使用全局 MODEL_IDLE_TIMEOUT（默认 300 秒）。
-        timeout 为 0 时强制卸载所有模型。
-        返回被卸载的模型名称列表。
-        """
-        if timeout is None:
-            timeout = MODEL_IDLE_TIMEOUT
+        if model_key in self.loaded_models:
+            self.touch_model(model_key)
+            return self.loaded_models[model_key]["instance"]
 
-        now = time.time()
-        unloaded = []
+        if not full_path.exists():
+            raise FileNotFoundError(f"指定的 SAM 3 模型权重不存在: {full_path.name}")
 
-        # 卸载 YOLO-World
-        if self.yolo_world_models:
-            idle_sec = now - self._last_used.get("yolo_world", 0)
-            if timeout == 0 or idle_sec > timeout:
-                world_count = len(self.yolo_world_models)
-                self.yolo_world_models.clear()
-                unloaded.append(f"YOLO-World ×{world_count} (空闲 {int(idle_sec)}s)")
+        self._ensure_capacity(model_key)
+        print(f"[SAM3] 正在加载 SAM 3 文本推理(Semantic)模型: {model_name}")
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        model = build_sam3_image_model(full_path_str)
+        model.to(device)
+        model.eval()
 
-        # 卸载 SAM 3 文本推理模型
-        if self.sam3_models:
-            idle_sec = now - self._last_used.get("sam3", 0)
-            if timeout == 0 or idle_sec > timeout:
-                sam3_count = len(self.sam3_models)
-                self.sam3_models.clear()
-                unloaded.append(f"SAM3 ×{sam3_count} (空闲 {int(idle_sec)}s)")
-
-        # 卸载 SAM
-        if self.sam_model is not None:
-            idle_sec = now - self._last_used.get("sam", 0)
-            if timeout == 0 or idle_sec > timeout:
-                del self.sam_model
-                self.sam_model = None
-                unloaded.append(f"SAM (空闲 {int(idle_sec)}s)")
-
-        # 卸载 YOLO-seg 缓存模型
-        if self.yolo_models:
-            idle_sec = now - self._last_used.get("yolo", 0)
-            if timeout == 0 or idle_sec > timeout:
-                model_count = len(self.yolo_models)
-                self.yolo_models.clear()
-                unloaded.append(f"YOLO-seg ×{model_count} (空闲 {int(idle_sec)}s)")
-
-        # 强制 Python GC 回收 + 释放 GPU 缓存
-        if unloaded:
-            gc.collect()
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-            print(f"[ModelManager] 已卸载空闲模型: {', '.join(unloaded)}")
-
-        return unloaded
-
-    def get_loaded_info(self) -> Dict[str, Any]:
-        """获取当前已加载模型的状态信息"""
-        now = time.time()
-        info = {}
-        if self.yolo_world_models:
-            info["yolo_world"] = {
-                "loaded": True,
-                "count": len(self.yolo_world_models),
-                "idle_seconds": int(now - self._last_used.get("yolo_world", now)),
-            }
-        if self.sam_model is not None:
-            info["sam"] = {
-                "loaded": True,
-                "idle_seconds": int(now - self._last_used.get("sam", now)),
-            }
-        if self.yolo_models:
-            info["yolo_seg"] = {
-                "loaded": True,
-                "count": len(self.yolo_models),
-                "idle_seconds": int(now - self._last_used.get("yolo", now)),
-            }
-        return info
+        self._register_model(model_key, model_name, "sam3", "SAM3概念分割", full_path_str, model)
+        return model
 
 predictor = LabelingPredictor(WORKSPACE_DIR)
 
@@ -707,14 +883,72 @@ async def _model_cleanup_loop():
             predictor.unload_idle_models()
         except Exception as e:
             print(f"[ModelManager] 后台清理异常: {e}")
+
+class UnloadSpecificModelRequest(BaseModel):
+    model_key: str = Field(..., description="要卸载的模型唯一 key")
+
+class SetMaxLoadedModelsRequest(BaseModel):
+    max_models: int = Field(default=2, ge=1, le=10, description="允许同时挂载的最大模型数量")
+
+@app.get("/api/labeling/loaded_models")
+def get_loaded_models():
+    """查询当前常驻显存/内存中的模型清单及挂载上限配置"""
+    return {
+        "status": "success",
+        "max_loaded_models": predictor.max_loaded_models,
+        "loaded_count": len(predictor.loaded_models),
+        "models": predictor.get_loaded_models_list()
+    }
+
+@app.post("/api/labeling/unload_specific_model")
+def unload_specific_model(req: UnloadSpecificModelRequest):
+    """指定卸载某个常驻模型，立即释放其占用的显存/内存"""
+    entry = predictor.unload_model_by_key(req.model_key)
+    if entry:
+        return {
+            "status": "success",
+            "message": f"已成功卸载并释放模型: {entry['name']}",
+            "unloaded_model": entry["name"],
+            "max_loaded_models": predictor.max_loaded_models,
+            "models": predictor.get_loaded_models_list()
+        }
+    return {
+        "status": "warning",
+        "message": "未找到指定的已加载模型或该模型已被释放",
+        "max_loaded_models": predictor.max_loaded_models,
+        "models": predictor.get_loaded_models_list()
+    }
+
+@app.post("/api/labeling/set_max_loaded_models")
+def set_max_loaded_models(req: SetMaxLoadedModelsRequest):
+    """设置最大允许同时挂载的模型数量（超出时将按 LRU 自动淘汰最久未使用的模型）"""
+    actual_max = predictor.set_max_loaded_models(req.max_models)
+    return {
+        "status": "success",
+        "message": f"已将模型挂载上限设置为 {actual_max} 个",
+        "max_loaded_models": actual_max,
+        "loaded_count": len(predictor.loaded_models),
+        "models": predictor.get_loaded_models_list()
+    }
+
 @app.post("/api/labeling/unload_models")
 def unload_models():
-    """手动或页面退出时释放所有已加载的推理模型，立即回收内存"""
+    """手动或页面退出时释放所有已加载的推理模型，立即回收显存/内存"""
     unloaded = predictor.unload_idle_models(timeout=0)
     if unloaded:
         print(f"[ModelManager] 接收到客户端退出/主动卸载请求，已即时释放模型: {', '.join(unloaded)}")
-        return {"status": "success", "message": f"已释放模型: {', '.join(unloaded)}"}
-    return {"status": "success", "message": "当前没有已加载的模型"}
+        return {
+            "status": "success",
+            "message": f"已释放模型: {', '.join(unloaded)}",
+            "max_loaded_models": predictor.max_loaded_models,
+            "models": []
+        }
+    return {
+        "status": "success",
+        "message": "当前没有已加载的模型",
+        "max_loaded_models": predictor.max_loaded_models,
+        "models": []
+    }
 
 @app.get("/api/labeling/model_status")
 def get_model_status():
@@ -722,8 +956,10 @@ def get_model_status():
     info = predictor.get_loaded_info()
     return {
         "idle_timeout": MODEL_IDLE_TIMEOUT,
+        "max_loaded_models": predictor.max_loaded_models,
         "models": info,
-        "any_loaded": len(info) > 0,
+        "loaded_list": predictor.get_loaded_models_list(),
+        "any_loaded": len(predictor.loaded_models) > 0,
     }
 
 # 1. 获取图片列表
