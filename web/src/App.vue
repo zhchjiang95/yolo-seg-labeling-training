@@ -1836,6 +1836,7 @@ const activePolyIndex = ref(null);
 const pendingDeletePolyIndex = ref(null);
 let pendingDeleteTimer = null;
 const modelsList = ref([]); // 后端扫描出的 YOLO-seg 模型列表
+const selectedModelPath = ref(''); // 当前选中的 YOLO 分割权重路径
 // 已常驻显存/内存的模型列表与挂载上限管理
 const loadedModels = ref([]); // [{key, name, type, type_display, path, loaded_at, last_used_at, idle_seconds}]
 const maxLoadedModels = ref(2); // 允许同时挂载的最大模型数量 (默认 2，LRU 循环淘汰)
@@ -2027,7 +2028,6 @@ const applyPromptConf = () => {
   // 清除剩余多边形的 confidence 字段（可选），但保留也无妨，这里保留它
   const removedCount = originalCount - polygons.value.length;
   if (removedCount > 0) {
-    saveHistory();
     showToast(`已成功移除 ${removedCount} 个低置信度目标`, 'success');
   }
 };
