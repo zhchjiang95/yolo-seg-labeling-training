@@ -204,6 +204,27 @@ class TrainStartRequest(BaseModel):
 @app.post("/api/start")
 def start_train(req: TrainStartRequest):
     """启动训练任务"""
+    # 校验本地数据集是否包含未标注图片
+    dataset_name = req.dataset or "default"
+    dataset_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset_name
+    images_dir = dataset_dir / "images"
+    labels_dir = dataset_dir / "labels"
+    
+    if images_dir.exists() and any(images_dir.iterdir()):
+        image_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+        images = [f for f in images_dir.iterdir() if f.is_file() and f.suffix.lower() in image_exts]
+        unlabeled_count = 0
+        for img in images:
+            lbl_file = labels_dir / (img.stem + ".txt")
+            # 既没有 label 文件，也不存在显式负样本空文件
+            if not lbl_file.exists():
+                unlabeled_count += 1
+        if unlabeled_count > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"数据集 '{dataset_name}' 中检测到 {unlabeled_count} 张未标注图片，已被安全拦截！未标注图片在 YOLO 中会被当成纯背景负样本，严重损害模型精度。请先在数据标注界面完成标注或标记为负样本后再开启训练。"
+            )
+
     config = req.model_dump()
     success = trainer.start_training(config)
     if not success:

@@ -337,12 +337,16 @@
           </div>
 
           <!-- 操作按钮 -->
-          <div style="margin-top: 24px;">
-            <button v-if="!isTraining" type="submit" class="btn btn-primary" :disabled="sysInfo.dataset_status !== 'ready'">
-              <svg style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <div class="start-training-btns">
+            <button v-if="!isTraining" type="submit" class="btn btn-primary" :disabled="sysInfo.dataset_status !== 'ready' || isCheckingDataset">
+              <svg v-if="!isCheckingDataset" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="5 3 19 12 5 21 5 3"/>
               </svg>
-              一键准备数据集并开始训练
+              <svg v-else class="spin-icon" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.2" fill="none" />
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none" />
+              </svg>
+              {{ isCheckingDataset ? '正在核验标注状态与硬件配置...' : '一键准备数据集并开始训练' }}
             </button>
             <button v-else type="button" @click="handleStopTrain" class="btn btn-danger">
               <svg style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -351,7 +355,7 @@
               强行终止训练任务
             </button>
             <div v-if="!isTraining" class="form-desc" style="text-align: center; margin-top: 8px; color: var(--text-muted); font-size: 11px;">
-              提示：训练开始将清除上一次训练的结果
+              提示：点击后将校验标注完整度并列出核对清单，确认后开始训练
             </div>
           </div>
         </form>
@@ -1452,8 +1456,312 @@
           </div>
         </div>
       </div>
-
     </div>
+
+    <!-- ========================================== -->
+    <!-- 模态弹窗 1: 未标注阻断警告弹窗 (Unlabeled Block Modal) -->
+    <!-- ========================================== -->
+    <Transition name="modal-fade">
+      <div v-if="showUnlabeledBlockModal" class="modal-overlay" @click.self="closeUnlabeledModal">
+        <div class="modal-card modal-warning-card">
+          <!-- 头部装饰图标与警告标题 -->
+          <div class="modal-header-warning">
+            <div class="warning-icon-wrapper">
+              <svg style="width: 28px; height: 28px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </div>
+            <div class="warning-title-group">
+              <h3 class="warning-main-title">无法启动训练：检测到存在未标注图片</h3>
+              <div class="warning-subtitle">数据集 [{{ trainCheckData.datasetName }}] 必须全量完成标注后方可开启训练</div>
+            </div>
+            <button class="modal-close-btn" @click="closeUnlabeledModal" title="关闭">×</button>
+          </div>
+
+          <!-- 统计数据状态条 -->
+          <div class="modal-stat-bar">
+            <div class="modal-stat-pill error">
+              <span class="pill-label">待标注图片</span>
+              <span class="pill-val">{{ trainCheckData.unlabeledCount }} 张</span>
+            </div>
+            <div class="modal-stat-pill success">
+              <span class="pill-label">已标正样本</span>
+              <span class="pill-val">{{ trainCheckData.labeledCount }} 张</span>
+            </div>
+            <div class="modal-stat-pill info">
+              <span class="pill-label">已标记负样本</span>
+              <span class="pill-val">{{ trainCheckData.negativeCount }} 张</span>
+            </div>
+            <div class="modal-stat-pill">
+              <span class="pill-label">图片总数</span>
+              <span class="pill-val">{{ trainCheckData.totalCount }} 张</span>
+            </div>
+          </div>
+
+          <!-- 原理剖析与防呆说明卡片 -->
+          <div class="modal-reason-box">
+            <div class="reason-title">
+              <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="16" x2="12" y2="12"/>
+                <line x1="12" y1="8" x2="12.01" y2="8"/>
+              </svg>
+              为什么必须完成标注才能开启训练？
+            </div>
+            <div class="reason-content">
+              <p>
+                <strong>1. 负样本训练机制：</strong>在 YOLO 目标检测与实例分割任务中，如果图片没有对应的标注文件（或内容为空），引擎会将其<strong>默认当作纯背景负样本（Negative Sample）</strong>参与反向传播。
+              </p>
+              <p>
+                <strong>2. 误惩罚与指标恶化：</strong>若这些未标注的图片实际包含生猪目标，送入网络训练时神经网络会对目标特征施加<strong>负向惩罚（抑制目标特征）</strong>，直接导致模型推理时发生严重的<strong>目标漏检、误报，并大幅拉低分割精度 (mAP)</strong>。
+              </p>
+              <p>
+                <strong>3. 规范化操作建议：</strong>请点击下方按钮前往标注页面，将剩余的 <strong>{{ trainCheckData.unlabeledCount }}</strong> 张图片完成轮廓标注；若某张图片确系没有任何目标的纯背景，可点击“标记为负样本”。
+              </p>
+            </div>
+          </div>
+
+          <!-- 底部操作按钮 -->
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="closeUnlabeledModal">稍后再说</button>
+            <button class="btn btn-primary btn-cta" @click="goToLabelingUnlabeled">
+              <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+              立即前往完成标注
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ========================================== -->
+    <!-- 模态弹窗 2: 训练启动前核对清单弹窗 (Training Launch Confirmation) -->
+    <!-- ========================================== -->
+    <Transition name="modal-fade">
+      <div v-if="showTrainConfirmModal" class="modal-overlay" @click.self="closeConfirmModal">
+        <div class="modal-card modal-checklist-card">
+          <!-- 头部 -->
+          <div class="modal-header-checklist">
+            <div class="checklist-header-left">
+              <div class="checklist-icon-wrapper">
+                <svg style="width: 24px; height: 24px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="checklist-title">训练任务启动核对清单</h3>
+                <div class="checklist-subtitle">Pre-Training Verification Checklist · 请确认训练参数、数据集统计与算力环境</div>
+              </div>
+            </div>
+            <button class="modal-close-btn" @click="closeConfirmModal" title="关闭">×</button>
+          </div>
+
+          <!-- 弹窗主体滚动区 -->
+          <div class="checklist-body">
+            <!-- 板块 1：训练超参数配置 -->
+            <div class="checklist-section">
+              <div class="checklist-section-header">
+                <div class="checklist-section-title">
+                  <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                  </svg>
+                  1. 训练超参数与策略 (Hyperparameters)
+                </div>
+                <span class="badge-tag primary">{{ trainCheckData.modelTypeDisplay }}</span>
+              </div>
+
+              <!-- 模型名 -->
+              <div class="config-model-row">
+                <span class="config-label">基底底模权重：</span>
+                <span class="config-model-name" :title="form.model_path">{{ trainCheckData.modelName }}</span>
+              </div>
+
+              <!-- 参数网格 -->
+              <div class="config-grid">
+                <div class="config-grid-item">
+                  <span class="cg-label">训练轮次 (Epochs)</span>
+                  <span class="cg-val">{{ form.epochs }} 轮</span>
+                </div>
+                <div class="config-grid-item">
+                  <span class="cg-label">批次大小 (Batch Size)</span>
+                  <span class="cg-val">{{ form.batch }}</span>
+                </div>
+                <div class="config-grid-item">
+                  <span class="cg-label">图像尺寸 (Img Size)</span>
+                  <span class="cg-val">{{ form.imgsz }} × {{ form.imgsz }}</span>
+                </div>
+                <div class="config-grid-item">
+                  <span class="cg-label">初始学习率 (lr0)</span>
+                  <span class="cg-val">{{ form.lr0 }}</span>
+                </div>
+                <div class="config-grid-item">
+                  <span class="cg-label">早停耐心 (Patience)</span>
+                  <span class="cg-val">{{ form.patience }} 轮</span>
+                </div>
+                <div class="config-grid-item">
+                  <span class="cg-label">计算设备 (Device)</span>
+                  <span class="cg-val">{{ form.device === 'cpu' ? 'CPU' : `GPU : ${form.device}` }}</span>
+                </div>
+              </div>
+
+              <!-- 划分与增强策略 -->
+              <div class="config-sub-info">
+                <div class="sub-info-row">
+                  <span class="cg-label">划分配比：</span>
+                  <span class="sub-info-val">{{ form.split_ratio }}</span>
+                  <span v-if="!form.force_re_split" class="badge-tag success" style="margin-left: 8px;">
+                    ✓ 增量固化保护模式生效中
+                  </span>
+                  <span v-else class="badge-tag warning" style="margin-left: 8px;">
+                    ⚠️ 全局重新划分洗牌模式
+                  </span>
+                </div>
+                <div class="sub-info-row" style="margin-top: 8px;">
+                  <span class="cg-label">增强策略：</span>
+                  <div class="tag-capsules">
+                    <span class="capsule">Mosaic: {{ form.mosaic }}</span>
+                    <span class="capsule">MixUp: {{ form.mixup }}</span>
+                    <span class="capsule">CopyPaste: {{ form.copy_paste }}</span>
+                    <span class="capsule">旋转: {{ form.degrees }}°</span>
+                    <span class="capsule">翻转: H{{ form.fliplr }} / V{{ form.flipud }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 板块 2：数据集信息与分布 -->
+            <div class="checklist-section">
+              <div class="checklist-section-header">
+                <div class="checklist-section-title">
+                  <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  2. 数据集概况与分布 (Dataset Overview)
+                </div>
+                <span class="badge-tag info">当前数据集：{{ trainCheckData.datasetName }}</span>
+              </div>
+
+              <!-- 数据集统计卡片 -->
+              <div class="ds-stats-cards">
+                <div class="ds-stat-card">
+                  <div class="ds-stat-num">{{ trainCheckData.totalCount }}</div>
+                  <div class="ds-stat-title">有效图片总数</div>
+                </div>
+                <div class="ds-stat-card success">
+                  <div class="ds-stat-num">{{ trainCheckData.labeledCount }}</div>
+                  <div class="ds-stat-title">已标正样本</div>
+                </div>
+                <div class="ds-stat-card">
+                  <div class="ds-stat-num">{{ trainCheckData.negativeCount }}</div>
+                  <div class="ds-stat-title">纯背景负样本</div>
+                </div>
+                <div class="ds-stat-card ready">
+                  <div class="ds-stat-num">0 <span style="font-size: 15px;">✔</span></div>
+                  <div class="ds-stat-title">待标注 (全部已就绪)</div>
+                </div>
+              </div>
+
+              <!-- 预估划分数量与目标类别 -->
+              <div class="ds-splits-row">
+                <div class="splits-estimate">
+                  <span class="cg-label">预估子集划分：</span>
+                  <span class="split-pill train">Train: ~{{ trainCheckData.estimatedSplits.train }} 张</span>
+                  <span class="split-pill val">Val: ~{{ trainCheckData.estimatedSplits.val }} 张</span>
+                  <span class="split-pill test">Test: ~{{ trainCheckData.estimatedSplits.test }} 张</span>
+                </div>
+                <div class="classes-display" style="margin-top: 10px;">
+                  <span class="cg-label">目标类别 (共 {{ trainCheckData.classes.length }} 类)：</span>
+                  <div class="class-chips">
+                    <span v-for="(cls, cIdx) in trainCheckData.classes" :key="cIdx" class="class-chip">
+                      <span class="class-chip-dot" :style="{ background: getPolyColor(cIdx) }"></span>
+                      {{ cls }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 板块 3：硬件算力与运行环境 -->
+            <div class="checklist-section">
+              <div class="checklist-section-header">
+                <div class="checklist-section-title">
+                  <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                    <line x1="6" y1="6" x2="6.01" y2="6"/>
+                    <line x1="6" y1="18" x2="6.01" y2="18"/>
+                  </svg>
+                  3. 硬件算力与运行负载 (Hardware & Environment)
+                </div>
+                <span class="badge-tag" :class="sysInfo.gpu_available ? 'success' : 'secondary'">
+                  {{ sysInfo.gpu_available ? '⚡ GPU 加速就绪' : '🖥️ CPU 计算模式' }}
+                </span>
+              </div>
+
+              <div class="hardware-grid">
+                <!-- GPU 信息 -->
+                <div class="hw-item">
+                  <div class="hw-label">图形加速器 (GPU)</div>
+                  <div class="hw-val highlight">{{ sysInfo.gpu_name !== 'N/A' ? sysInfo.gpu_name : (sysInfo.gpu_available ? '独立显卡' : '无独立显卡 / CPU 运行') }}</div>
+                  <div v-if="sysInfo.gpu_available && sysInfo.gpu_memory_total_gb > 0" class="hw-sub">
+                    <div style="display: flex; justify-content: space-between;">
+                      <span>物理显存占用:</span>
+                      <strong>{{ sysInfo.gpu_memory_used_gb }} / {{ sysInfo.gpu_memory_total_gb }} GB ({{ sysInfo.gpu_memory_percent }}%)</strong>
+                    </div>
+                    <div class="hw-progress-track">
+                      <div 
+                        class="hw-progress-bar" 
+                        :class="{ warn: sysInfo.gpu_memory_percent > 70, danger: sysInfo.gpu_memory_percent > 88 }"
+                        :style="{ width: `${Math.min(100, sysInfo.gpu_memory_percent)}%` }"
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- CPU 与 内存 -->
+                <div class="hw-item">
+                  <div class="hw-label">处理器与系统内存</div>
+                  <div class="hw-val">CPU 使用率: {{ sysInfo.cpu_percent }}%</div>
+                  <div class="hw-sub">
+                    <div style="display: flex; justify-content: space-between;">
+                      <span>系统物理内存:</span>
+                      <strong>{{ sysInfo.sys_memory_used_gb }} / {{ sysInfo.memory_total_gb }} GB ({{ sysInfo.memory_percent }}%)</strong>
+                    </div>
+                    <div class="hw-progress-track">
+                      <div 
+                        class="hw-progress-bar" 
+                        :class="{ warn: sysInfo.memory_percent > 75, danger: sysInfo.memory_percent > 90 }"
+                        :style="{ width: `${Math.min(100, sysInfo.memory_percent)}%` }"
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 底部确认操作栏 -->
+          <div class="checklist-footer">
+            <div class="checklist-tip">
+              💡 提示：点击确认后系统将自动进行增量数据集划分、生成 <code>data.yaml</code> 并拉起后台 YOLO 实例分割训练进程。
+            </div>
+            <div class="checklist-actions">
+              <button class="btn btn-secondary" @click="closeConfirmModal">返回修改参数</button>
+              <button class="btn btn-primary btn-launch" @click="confirmAndStartTrain">
+                <svg style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                确认无误，立即开始训练
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -1643,27 +1951,152 @@ const closeLogStream = () => {
   }
 };
 
+// ==========================================
+// 训练前核对与弹窗状态
+// ==========================================
+const isCheckingDataset = ref(false);
+const showUnlabeledBlockModal = ref(false);
+const showTrainConfirmModal = ref(false);
+const trainCheckData = reactive({
+  datasetName: 'default',
+  totalCount: 0,
+  unlabeledCount: 0,
+  labeledCount: 0,
+  negativeCount: 0,
+  classes: [],
+  modelName: '',
+  modelTypeDisplay: '',
+  estimatedSplits: { train: 0, val: 0, test: 0 },
+  splitRatioStr: '8:1:1',
+  forceReSplit: false
+});
+
+// 点击“一键准备数据集并开始训练”按钮的入口预检
 const handleStartTrain = async () => {
+  if (isCheckingDataset.value || isTraining.value) return;
+  isCheckingDataset.value = true;
+
   try {
-    clearLogs();
-    
-    // 统计未标注的图片并提示
-    try {
-      const imgRes = await fetch(`${API_BASE}/api/labeling/images?dataset=${currentDataset.value}`);
-      if (imgRes.ok) {
-        const list = await imgRes.json();
-        const unlabeledCount = list.filter(img => img.status === "unlabeled").length;
-        if (unlabeledCount > 0) {
-          if (!confirm(`尚有 ${unlabeledCount} 张图片未标注，未标注的图片将作为背景训练。是否继续？`)) {
-            logs.value.push('[SYSTEM] 训练启动已被取消。');
-            return;
-          }
-        }
-      }
-    } catch (err) {
-      console.error('获取待标图片列表失败:', err);
+    // 1. 并发获取最新图片状态、分类标签与硬件负载
+    const [imgRes, clsRes, sysRes] = await Promise.all([
+      fetch(`${API_BASE}/api/labeling/images?dataset=${currentDataset.value}`),
+      fetch(`${API_BASE}/api/labeling/classes?dataset=${currentDataset.value}`),
+      fetch(`${API_BASE}/api/sysinfo?dataset=${currentDataset.value}`)
+    ]);
+
+    let imgs = [];
+    if (imgRes.ok) {
+      imgs = await imgRes.json();
     }
 
+    let classList = ['pig'];
+    if (clsRes.ok) {
+      const cData = await clsRes.json();
+      classList = cData.classes && cData.classes.length > 0 ? cData.classes : ['pig'];
+    }
+
+    if (sysRes.ok) {
+      const sData = await sysRes.json();
+      Object.assign(sysInfo, sData);
+    }
+
+    // 统计图片分布
+    const unlabeledList = imgs.filter(img => img.status === "unlabeled");
+    const labeledList = imgs.filter(img => img.status === "labeled");
+    const negativeList = imgs.filter(img => img.status === "negative");
+    const totalCount = imgs.length;
+
+    // 匹配基底模型名称与类型
+    const matchedModel = modelsList.value.find(m => m.path === form.model_path);
+    const modelName = matchedModel ? matchedModel.name : (form.model_path.split('/').pop() || 'yolo26s-seg.pt');
+    const modelTypeDisplay = matchedModel ? (matchedModel.type === 'trained' ? '训练产物' : (matchedModel.type === 'default' ? '默认分割底模' : '内置权重')) : '自定义权重';
+
+    // 依据比例计算预估划分数量
+    let ratios = [0.8, 0.1, 0.1];
+    try {
+      const parts = form.split_ratio.split(':').map(Number);
+      if (parts.length === 3 && parts.every(n => !isNaN(n) && n >= 0)) {
+        const sum = parts.reduce((a, b) => a + b, 0);
+        if (sum > 0) ratios = parts.map(n => n / sum);
+      }
+    } catch (e) {}
+
+    const estTrain = Math.round(totalCount * ratios[0]);
+    const estVal = Math.round(totalCount * ratios[1]);
+    const estTest = Math.max(0, totalCount - estTrain - estVal);
+
+    Object.assign(trainCheckData, {
+      datasetName: currentDataset.value,
+      totalCount,
+      unlabeledCount: unlabeledList.length,
+      labeledCount: labeledList.length,
+      negativeCount: negativeList.length,
+      classes: classList,
+      modelName,
+      modelTypeDisplay,
+      estimatedSplits: {
+        train: estTrain,
+        val: estVal,
+        test: estTest
+      },
+      splitRatioStr: form.split_ratio,
+      forceReSplit: form.force_re_split
+    });
+
+    // 检查是否有未标注图片：若有，坚决阻断并弹窗说明
+    if (unlabeledList.length > 0) {
+      showUnlabeledBlockModal.value = true;
+      return;
+    }
+
+    // 若图片总数为 0，且无后端 zip 数据集
+    if (totalCount === 0 && sysInfo.dataset_status !== 'ready') {
+      showToast('当前数据集为空，未检测到任何可供训练的图片！', 'error');
+      return;
+    }
+
+    // 校验完全通过，展示训练任务启动核对清单
+    showTrainConfirmModal.value = true;
+  } catch (err) {
+    console.error('启动训练校验失败:', err);
+    showToast('数据集状态校验异常: ' + err.message, 'error');
+  } finally {
+    isCheckingDataset.value = false;
+  }
+};
+
+// 未标注弹窗操作：立即前往完成标注
+const goToLabelingUnlabeled = async () => {
+  showUnlabeledBlockModal.value = false;
+  currentTab.value = 'label';
+  filterStatus.value = 'unlabeled';
+  await fetchImageList();
+  const firstUnlabeled = imageList.value.find(img => img.status === 'unlabeled');
+  if (firstUnlabeled) {
+    selectImage(firstUnlabeled);
+  }
+  showToast('已为您切换至待标注列表，请完成所有图片标注后再开始训练', 'info');
+};
+
+const closeUnlabeledModal = () => {
+  showUnlabeledBlockModal.value = false;
+};
+
+// 确认清单弹窗操作：返回修改
+const closeConfirmModal = () => {
+  showTrainConfirmModal.value = false;
+};
+
+// 确认清单弹窗操作：确认无误，执行开始训练
+const confirmAndStartTrain = async () => {
+  showTrainConfirmModal.value = false;
+  await executeStartTrain();
+};
+
+// 底层执行启动训练请求
+const executeStartTrain = async () => {
+  try {
+    clearLogs();
     showToast('正在向后端请求启动 YOLO 训练...', 'info');
     logs.value.push('[SYSTEM] 正在向后端请求启动 YOLO26s-seg 实例分割训练...');
     const res = await fetch(`${API_BASE}/api/start`, {
