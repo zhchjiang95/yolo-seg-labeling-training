@@ -208,15 +208,29 @@ def split_dataset(
 
     total_count = len(images_list)
 
+    # 6. 获取类别列表
+    classes = ["pig"]  # 默认类别
+    if classes_file and classes_file.exists():
+        try:
+            with open(classes_file, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = [line.strip() for line in f.readlines() if line.strip()]
+                if lines:
+                    classes = lines
+        except Exception as e:
+            print(f"读取 classes.txt 失败，使用默认类别 [pig]: {e}")
+
+    # 初始化类别实例统计字典: { cls_name: {'total': 0, 'train': 0, 'val': 0, 'test': 0} }
+    class_distribution = {cls_name: {'total': 0, 'train': 0, 'val': 0, 'test': 0} for cls_name in classes}
+
     # 计数信息
     stats = {
         'total': total_count,
-        'train': {'images': len(splits['train']), 'labels': 0, 'negatives': 0},
-        'val': {'images': len(splits['val']), 'labels': 0, 'negatives': 0},
-        'test': {'images': len(splits['test']), 'labels': 0, 'negatives': 0}
+        'train': {'images': len(splits['train']), 'labels': 0, 'negatives': 0, 'instances': 0},
+        'val': {'images': len(splits['val']), 'labels': 0, 'negatives': 0, 'instances': 0},
+        'test': {'images': len(splits['test']), 'labels': 0, 'negatives': 0, 'instances': 0}
     }
 
-    # 6. 分发文件
+    # 7. 分发文件并精准解析统计每个子集与类别的分布
     for split_name, img_files in splits.items():
         dest_img_dir = output_dir_obj / split_name / 'images'
         dest_lbl_dir = output_dir_obj / split_name / 'labels'
@@ -230,39 +244,38 @@ def split_dataset(
             lbl_path = labels_dir / lbl_name
 
             if lbl_path.exists() and lbl_path.is_file():
-                # 如果存在标签文件且非空，则复制
-                # 如果是空文件（即负样本），也是合法的，我们复制空文件或者不复制皆可。
-                # 按照用户的说法，直接把负样本放在 images 文件夹中，不需要在 labels 文件夹生成空文件。
-                # 也就是说，如果 labels 中没有或 labels 中是空的，我们就不在目标的 labels 下面生成空文件。
                 with open(lbl_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read().strip()
                 
                 if content:
                     shutil.copy2(lbl_path, dest_lbl_dir / lbl_name)
                     stats[split_name]['labels'] += 1
+
+                    # 逐行解析标注实例类别
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        parts = line.split()
+                        try:
+                            cls_id = int(parts[0])
+                            cls_name = classes[cls_id] if 0 <= cls_id < len(classes) else f"class_{cls_id}"
+                            if cls_name not in class_distribution:
+                                class_distribution[cls_name] = {'total': 0, 'train': 0, 'val': 0, 'test': 0}
+                            class_distribution[cls_name]['total'] += 1
+                            class_distribution[cls_name][split_name] += 1
+                            stats[split_name]['instances'] += 1
+                        except Exception:
+                            pass
                 else:
-                    # 空白文件也视作负样本，不复制（符合用户仅保留 image 不创建 labels 空文件的心智）
+                    # 空白文件视作负样本
                     stats[split_name]['negatives'] += 1
             else:
-                # 找不到 label 文件，也作为负样本处理
+                # 找不到 label 文件也作为负样本
                 stats[split_name]['negatives'] += 1
-
-    # 7. 获取类别列表
-    classes = ["pig"]  # 默认类别
-    if classes_file and classes_file.exists():
-        try:
-            with open(classes_file, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = [line.strip() for line in f.readlines() if line.strip()]
-                if lines:
-                    classes = lines
-        except Exception as e:
-            print(f"读取 classes.txt 失败，使用默认类别 [pig]: {e}")
 
     # 8. 写入 YOLO 格式的 data.yaml
     # 注意：YOLO 训练时的路径最好是绝对路径，或者相对于执行训练时所在的工作目录的相对路径
-    # 这里我们使用相对于 output_dir 的相对路径，但写入 data.yaml 时，为了避免 YOLO 寻找出错，
-    # 建议将 data.yaml 的 path 设置为 output_dir 的绝对路径。
-    
     yaml_content = f"""# YOLOv8/v10 Dataset configuration
 path: {output_dir_obj.resolve().as_posix()}  # 绝对路径
 train: train/images
@@ -283,14 +296,43 @@ names:
     if not use_local and temp_extract_dir.exists():
         shutil.rmtree(temp_extract_dir)
 
-    print(f"数据集划分完成。总计: {total_count} 张图片。")
+    # 10. 构建完整的数据集概况与分布画像 (dataset_summary)
+    dataset_name = Path(local_dataset_dir).name if local_dataset_dir else "default"
+    total_labeled = sum(stats[s]['labels'] for s in ['train', 'val', 'test'])
+    total_negatives = sum(stats[s]['negatives'] for s in ['train', 'val', 'test'])
+    total_instances = sum(cls_data['total'] for cls_data in class_distribution.values())
+
+    splits_summary = {}
+    for s in ['train', 'val', 'test']:
+        img_cnt = stats[s]['images']
+        splits_summary[s] = {
+            'images': img_cnt,
+            'percent': round((img_cnt / total_count * 100), 1) if total_count > 0 else 0.0,
+            'labels': stats[s]['labels'],
+            'negatives': stats[s]['negatives'],
+            'instances': stats[s]['instances']
+        }
+
+    dataset_summary = {
+        'dataset_name': dataset_name,
+        'total_images': total_count,
+        'labeled_images': total_labeled,
+        'negative_images': total_negatives,
+        'total_instances': total_instances,
+        'classes': classes,
+        'splits': splits_summary,
+        'class_distribution': class_distribution
+    }
+
+    print(f"数据集划分完成。总计: {total_count} 张图片 (正样本: {total_labeled}, 负样本: {total_negatives}, 实例总数: {total_instances})。")
     print(f"训练集: {stats['train']['images']}，验证集: {stats['val']['images']}，测试集: {stats['test']['images']}")
     
     return {
         "status": "success",
         "data_yaml": yaml_file_path.resolve().as_posix(),
         "stats": stats,
-        "classes": classes
+        "classes": classes,
+        "dataset_summary": dataset_summary
     }
 
 if __name__ == "__main__":

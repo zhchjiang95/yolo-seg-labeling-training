@@ -337,7 +337,7 @@
           </div>
 
           <!-- 操作按钮 -->
-          <div class="start-training-btns">
+          <div :class="!isTraining ? 'sticky-start-training-btn' : ''">
             <button v-if="!isTraining" type="submit" class="btn btn-primary" :disabled="sysInfo.dataset_status !== 'ready' || isCheckingDataset">
               <svg v-if="!isCheckingDataset" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="5 3 19 12 5 21 5 3"/>
@@ -543,6 +543,204 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- 训练策略与数据集画像面板 (训练时与结束后均呈现) -->
+        <div v-if="hasActiveProfile || isTraining" class="glass-card training-profile-card">
+          <div class="profile-header" @click="isProfileExpanded = !isProfileExpanded" style="cursor: pointer;">
+            <div class="profile-header-title">
+              <svg style="width: 18px; height: 18px; color: var(--primary);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                <line x1="8" y1="21" x2="16" y2="21"/>
+                <line x1="12" y1="17" x2="12" y2="21"/>
+              </svg>
+              <span>训练策略与数据集画像</span>
+              <!-- 训练中 vs 历史基线 徽章 -->
+              <span v-if="isTraining" class="profile-tag running">
+                <span class="dot active" style="width: 6px; height: 6px;"></span> 训练中配置
+              </span>
+              <span v-else-if="trainStatus.last_run && trainStatus.last_run.has_data" class="profile-tag history">
+                <svg style="width: 11px; height: 11px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                最近训练基线
+              </span>
+            </div>
+
+            <div class="profile-header-meta" @click.stop>
+              <span class="profile-dataset-badge">
+                <svg style="width: 12px; height: 12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                {{ activeProfileMeta.dataset || activeDatasetSummary?.dataset_name || currentDataset }}
+              </span>
+              <span v-if="activeProfileMeta.force_re_split" class="profile-split-badge warning" title="该轮训练采用了全新全局随机洗牌划分">
+                全局重洗
+              </span>
+              <span v-else class="profile-split-badge safe" title="老数据集合固定保护，增量数据按比例追加">
+                增量固化
+              </span>
+              <!-- 折叠展开切换 -->
+              <button type="button" class="profile-toggle-btn" @click="isProfileExpanded = !isProfileExpanded" :title="isProfileExpanded ? '收起画像' : '展开画像'">
+                <svg :style="{ transform: isProfileExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }" style="width: 13px; height: 13px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 面板详细展开内容 -->
+          <transition name="fade-slide">
+            <div v-show="isProfileExpanded" class="profile-content">
+              
+              <!-- 准备中阶段友好提示 -->
+              <div v-if="isTraining && !activeDatasetSummary && trainStatus.state === 'preparing'" class="profile-preparing-tip">
+                <svg class="spin-icon" style="width: 15px; height: 15px; color: var(--warning);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.2" fill="none" /><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none" /></svg>
+                正在执行增量固化划分并统计数据集画像，完成后将即刻呈现分布明细...
+              </div>
+
+              <!-- 1. 数据集概况与分布画像 -->
+              <div v-if="activeDatasetSummary" class="profile-section">
+                <div class="profile-sub-title">
+                  <svg style="width: 14px; height: 14px; color: var(--primary);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                  数据集概况与样本分布
+                </div>
+
+                <!-- 概况指标小卡片 -->
+                <div class="ds-stats-row">
+                  <div class="ds-stat-card">
+                    <div class="ds-stat-num">{{ activeDatasetSummary.total_images }}</div>
+                    <div class="ds-stat-label">总图片数</div>
+                  </div>
+                  <div class="ds-stat-card">
+                    <div class="ds-stat-num" style="color: var(--success);">{{ activeDatasetSummary.labeled_images }}</div>
+                    <div class="ds-stat-label">已标注正样本</div>
+                  </div>
+                  <div class="ds-stat-card">
+                    <div class="ds-stat-num" style="color: var(--warning);">{{ activeDatasetSummary.negative_images }}</div>
+                    <div class="ds-stat-label">纯背景负样本</div>
+                  </div>
+                  <div class="ds-stat-card">
+                    <div class="ds-stat-num" style="color: var(--primary);">{{ activeDatasetSummary.total_instances }}</div>
+                    <div class="ds-stat-label">目标标注实例</div>
+                  </div>
+                </div>
+
+                <!-- 划分子集彩色堆叠比例条 -->
+                <div v-if="activeDatasetSummary.splits" class="split-bar-section">
+                  <div class="split-bar-header">
+                    <span>数据集划分比例 (Train : Val : Test)</span>
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary);">
+                      {{ activeDatasetSummary.splits.train?.percent }}% : {{ activeDatasetSummary.splits.val?.percent }}% : {{ activeDatasetSummary.splits.test?.percent }}%
+                    </span>
+                  </div>
+                  <div class="split-stacked-bar">
+                    <div class="split-bar-seg train" :style="{ width: (activeDatasetSummary.splits.train?.percent || 0) + '%' }" :title="'训练集: ' + activeDatasetSummary.splits.train?.images + '张 (' + activeDatasetSummary.splits.train?.percent + '%)'"></div>
+                    <div class="split-bar-seg val" :style="{ width: (activeDatasetSummary.splits.val?.percent || 0) + '%' }" :title="'验证集: ' + activeDatasetSummary.splits.val?.images + '张 (' + activeDatasetSummary.splits.val?.percent + '%)'"></div>
+                    <div class="split-bar-seg test" :style="{ width: (activeDatasetSummary.splits.test?.percent || 0) + '%' }" :title="'测试集: ' + activeDatasetSummary.splits.test?.images + '张 (' + activeDatasetSummary.splits.test?.percent + '%)'"></div>
+                  </div>
+                  <div class="split-cards-row">
+                    <div class="split-detail-card">
+                      <span class="split-legend-dot train"></span>
+                      <span class="split-name">训练集</span>
+                      <span class="split-val">{{ activeDatasetSummary.splits.train?.images }} 张 ({{ activeDatasetSummary.splits.train?.instances }} 实例)</span>
+                    </div>
+                    <div class="split-detail-card">
+                      <span class="split-legend-dot val"></span>
+                      <span class="split-name">验证集</span>
+                      <span class="split-val">{{ activeDatasetSummary.splits.val?.images }} 张 ({{ activeDatasetSummary.splits.val?.instances }} 实例)</span>
+                    </div>
+                    <div class="split-detail-card">
+                      <span class="split-legend-dot test"></span>
+                      <span class="split-name">测试集</span>
+                      <span class="split-val">{{ activeDatasetSummary.splits.test?.images }} 张 ({{ activeDatasetSummary.splits.test?.instances }} 实例)</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 类别实例分布小标签 -->
+                <div v-if="activeDatasetSummary.class_distribution && Object.keys(activeDatasetSummary.class_distribution).length > 0" class="class-dist-box">
+                  <div class="class-dist-title">类别实例明细：</div>
+                  <div class="class-dist-tags">
+                    <div v-for="(clsStat, cName) in activeDatasetSummary.class_distribution" :key="cName" class="class-dist-tag">
+                      <span class="class-tag-name">{{ cName }}</span>
+                      <span class="class-tag-total">{{ clsStat.total }} 处</span>
+                      <span class="class-tag-sub">(训练:{{ clsStat.train }} / 验证:{{ clsStat.val }} / 测试:{{ clsStat.test }})</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 2. 训练超参数与策略画像 -->
+              <div v-if="activeProfileMeta && Object.keys(activeProfileMeta).length > 0" class="profile-section">
+                <div class="profile-sub-title">
+                  <svg style="width: 14px; height: 14px; color: var(--primary);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                  超参数与数据增强策略
+                </div>
+
+                <!-- 超参数小芯片 -->
+                <div class="hparams-grid">
+                  <div class="hparam-chip">
+                    <span class="hparam-key">基底模型</span>
+                    <span class="hparam-val highlight" :title="activeProfileMeta.model_path">{{ activeProfileMeta.model_name || 'yolo26s-seg.pt' }}</span>
+                  </div>
+                  <div class="hparam-chip">
+                    <span class="hparam-key">训练轮次</span>
+                    <span class="hparam-val">{{ activeProfileMeta.epochs }} 轮</span>
+                  </div>
+                  <div class="hparam-chip">
+                    <span class="hparam-key">批次大小</span>
+                    <span class="hparam-val">{{ activeProfileMeta.batch }}</span>
+                  </div>
+                  <div class="hparam-chip">
+                    <span class="hparam-key">图像尺寸</span>
+                    <span class="hparam-val">{{ activeProfileMeta.imgsz }} × {{ activeProfileMeta.imgsz }}</span>
+                  </div>
+                  <div class="hparam-chip">
+                    <span class="hparam-key">学习率 lr0</span>
+                    <span class="hparam-val">{{ activeProfileMeta.lr0 }}</span>
+                  </div>
+                  <div class="hparam-chip">
+                    <span class="hparam-key">早停耐心</span>
+                    <span class="hparam-val">{{ activeProfileMeta.patience }}</span>
+                  </div>
+                  <div class="hparam-chip">
+                    <span class="hparam-key">训练设备</span>
+                    <span class="hparam-val">{{ activeProfileMeta.device }}</span>
+                  </div>
+                  <div class="hparam-chip">
+                    <span class="hparam-key">划分配比</span>
+                    <span class="hparam-val">{{ activeProfileMeta.split_ratio || '8:1:1' }}</span>
+                  </div>
+                </div>
+
+                <!-- 数据增强策略 -->
+                <div class="aug-strategy-row">
+                  <div class="aug-chip" :class="{ disabled: !activeProfileMeta.mosaic || activeProfileMeta.mosaic == 0 }">
+                    <span class="aug-name">Mosaic</span>
+                    <span class="aug-val">{{ activeProfileMeta.mosaic ?? 0.5 }}</span>
+                  </div>
+                  <div class="aug-chip" :class="{ disabled: !activeProfileMeta.mixup || activeProfileMeta.mixup == 0 }">
+                    <span class="aug-name">MixUp</span>
+                    <span class="aug-val">{{ activeProfileMeta.mixup ?? 0 }}</span>
+                  </div>
+                  <div class="aug-chip" :class="{ disabled: !activeProfileMeta.copy_paste || activeProfileMeta.copy_paste == 0 }">
+                    <span class="aug-name">CopyPaste</span>
+                    <span class="aug-val">{{ activeProfileMeta.copy_paste ?? 0.3 }}</span>
+                  </div>
+                  <div class="aug-chip" :class="{ disabled: !activeProfileMeta.fliplr || activeProfileMeta.fliplr == 0 }">
+                    <span class="aug-name">水平翻转</span>
+                    <span class="aug-val">{{ activeProfileMeta.fliplr ?? 0.5 }}</span>
+                  </div>
+                  <div class="aug-chip" :class="{ disabled: !activeProfileMeta.flipud || activeProfileMeta.flipud == 0 }">
+                    <span class="aug-name">垂直翻转</span>
+                    <span class="aug-val">{{ activeProfileMeta.flipud ?? 0.5 }}</span>
+                  </div>
+                  <div class="aug-chip" :class="{ disabled: !activeProfileMeta.degrees || activeProfileMeta.degrees == 0 }">
+                    <span class="aug-name">旋转角度</span>
+                    <span class="aug-val">±{{ activeProfileMeta.degrees ?? 180 }}°</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </transition>
         </div>
 
         <!-- 终端日志控制台 -->
@@ -1750,12 +1948,12 @@
               💡 提示：点击确认后系统将自动进行增量数据集划分、生成 <code>data.yaml</code> 并拉起后台 YOLO 实例分割训练进程。
             </div>
             <div class="checklist-actions">
-              <button class="btn btn-secondary" @click="closeConfirmModal">返回修改参数</button>
-              <button class="btn btn-primary btn-launch" @click="confirmAndStartTrain">
+              <button style="width: 160px" class="btn btn-secondary" @click="closeConfirmModal">取消</button>
+              <button style="width: 160px" class="btn btn-primary btn-launch" @click="confirmAndStartTrain">
                 <svg style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="5 3 19 12 5 21 5 3"/>
                 </svg>
-                确认无误，立即开始训练
+                立即开始训练
               </button>
             </div>
           </div>
@@ -1843,6 +2041,8 @@ const sysInfo = reactive({
 const trainStatus = reactive({
   state: 'idle',
   dataset: '',
+  meta: {},
+  dataset_summary: null,
   progress: {
     epoch: 0,
     total_epochs: 300,
@@ -1870,8 +2070,33 @@ const trainStatus = reactive({
       map50_95: 0.0
     },
     meta: {},
+    dataset_summary: null,
     results_png: ''
   }
+});
+
+// 训练策略与数据集画像面板折叠状态与数据绑定
+const isProfileExpanded = ref(true);
+
+const activeProfileMeta = computed(() => {
+  if (isTraining.value && trainStatus.meta && Object.keys(trainStatus.meta).length > 0) {
+    return trainStatus.meta;
+  }
+  return trainStatus.last_run?.meta || {};
+});
+
+const activeDatasetSummary = computed(() => {
+  if (isTraining.value && trainStatus.dataset_summary) {
+    return trainStatus.dataset_summary;
+  }
+  return trainStatus.last_run?.dataset_summary || null;
+});
+
+const hasActiveProfile = computed(() => {
+  return Boolean(
+    (activeProfileMeta.value && Object.keys(activeProfileMeta.value).length > 0) ||
+    activeDatasetSummary.value
+  );
 });
 
 const logs = ref([]);

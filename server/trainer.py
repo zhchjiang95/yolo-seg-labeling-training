@@ -22,6 +22,8 @@ class YOLOTrainer:
         self.state = "idle"  # 状态包括: idle (空闲), preparing (数据集准备中), training (训练中), completed (已完成), failed (失败), stopped (已停止)
         self.process: Optional[subprocess.Popen] = None
         self.dataset = ""  # 当前正在训练的数据集名称
+        self.train_meta = {}  # 当前运行的训练超参数与策略配置
+        self.dataset_summary = None  # 当前运行的数据集概况与分布情况
         self.progress = {
             "epoch": 0,
             "total_epochs": 0,
@@ -68,7 +70,9 @@ class YOLOTrainer:
             return {
                 "state": self.state,
                 "progress": self.progress.copy(),
-                "dataset": self.dataset
+                "dataset": self.dataset,
+                "meta": self.train_meta,
+                "dataset_summary": self.dataset_summary
             }
 
     def start_training(self, train_config: Dict[str, Any]) -> bool:
@@ -83,6 +87,8 @@ class YOLOTrainer:
 
             self.state = "preparing"
             self.dataset = train_config.get("dataset", "default")  # 记录当前训练的数据集
+            self.train_meta = {}
+            self.dataset_summary = None
             # 初始化进度信息
             self.progress = {
                 "epoch": 0,
@@ -166,6 +172,7 @@ class YOLOTrainer:
             )
             
             data_yaml_path = split_res["data_yaml"]
+            dataset_summary = split_res.get("dataset_summary")
             self._write_log(f"[SYSTEM] 数据集自动准备完成！已写入 data.yaml: {data_yaml_path}\n")
 
             # 提前创建训练结果目录并保存训练元数据（如所用数据集、基底模型），方便后续空闲时查询
@@ -229,10 +236,15 @@ class YOLOTrainer:
                     "copy_paste": config.get("copy_paste", 0.3),
                     "fliplr": config.get("fliplr", 0.5),
                     "flipud": config.get("flipud", 0.5),
-                    "degrees": config.get("degrees", 180.0)
+                    "degrees": config.get("degrees", 180.0),
+                    "dataset_summary": dataset_summary
                 }
                 with open(save_dir / "train_meta.json", "w", encoding="utf-8") as f:
                     json.dump(train_meta, f, ensure_ascii=False, indent=4)
+
+                with self.lock:
+                    self.train_meta = train_meta
+                    self.dataset_summary = dataset_summary
             except Exception as e:
                 self._write_log(f"[SYSTEM] 写入 train_meta.json 失败: {str(e)}\n")
             
@@ -472,12 +484,14 @@ if __name__ == '__main__':
         # 1. 读取 train_meta.json 获取数据集名称及元配置
         dataset_name = "未知数据集"
         meta_info = {}
+        dataset_summary = None
         meta_file = target_dir / "train_meta.json"
         if meta_file.exists():
             try:
                 with open(meta_file, "r", encoding="utf-8") as f:
                     meta_info = json.load(f)
                     dataset_name = meta_info.get("dataset", "default")
+                    dataset_summary = meta_info.get("dataset_summary")
             except Exception:
                 pass
         else:
@@ -589,6 +603,7 @@ if __name__ == '__main__':
             "has_best_weight": has_best_weight,
             "metrics": metrics,
             "meta": meta_info,
+            "dataset_summary": dataset_summary,
             "results_png": rel_results_png if has_results_png else ""
         }
 
