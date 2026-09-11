@@ -155,29 +155,54 @@
           <!-- 基础训练配置 -->
           <div class="form-row-2">
             <div class="form-group">
-              <label for="epochs">训练轮次 (Epochs)</label>
+              <label for="epochs">
+                训练轮次 (Epochs)
+                <span class="info-tooltip">?
+                  <span class="tooltip-box">整个训练集被模型完整学习的轮数。轮数越多学习越充分，但过大容易过拟合。一般建议设置 100~300 轮，结合早停机制可在模型收敛时自动停止。</span>
+                </span>
+              </label>
               <input type="number" id="epochs" v-model.number="form.epochs" min="1" max="1000" required :disabled="isTraining" />
             </div>
             <div class="form-group">
-              <label for="batch">批次大小 (Batch Size)</label>
+              <label for="batch">
+                批次大小 (Batch Size)
+                <span class="info-tooltip">?
+                  <span class="tooltip-box">单次前向与反向传播所处理的图片数量。数值越大梯度越平稳、训练越快，但显存开销成倍增加。若显卡报错 CUDA OOM 请适当调小。</span>
+                </span>
+              </label>
               <input type="number" id="batch" v-model.number="form.batch" min="1" max="128" required :disabled="isTraining" />
             </div>
           </div>
 
           <div class="form-row-2">
             <div class="form-group">
-              <label for="lr0">初始学习率 (lr0)</label>
+              <label for="lr0">
+                初始学习率 (lr0)
+                <span class="info-tooltip">?
+                  <span class="tooltip-box">模型参数更新的初始步长。学习率过大会导致损失震荡发散，过小则收敛缓慢。使用预训练权重微调时通常保持默认 (如 0.01) 或适当降低。</span>
+                </span>
+              </label>
               <input type="number" id="lr0" v-model.number="form.lr0" step="0.0001" min="0.0001" max="0.1" required :disabled="isTraining" />
             </div>
             <div class="form-group">
-              <label for="patience">早停耐心值 (Patience)</label>
+              <label for="patience">
+                早停耐心值 (Patience)
+                <span class="info-tooltip">?
+                  <span class="tooltip-box">当验证集指标在连续 N 轮内均未提升时，自动提前终止训练以防止过拟合并节省算力。设为 0 或大于等于总轮数可禁用早停。</span>
+                </span>
+              </label>
               <input type="number" id="patience" v-model.number="form.patience" min="0" required :disabled="isTraining" />
             </div>
           </div>
 
           <div class="form-row-2">
             <div class="form-group">
-              <label for="imgsz">图片尺寸 (Image Size)</label>
+              <label for="imgsz">
+                图片尺寸 (Image Size)
+                <span class="info-tooltip">?
+                  <span class="tooltip-box">网络训练时统一缩放的图像长边分辨率。尺寸越大对小目标与精细边缘轮廓检测越有利，但显存和耗时急剧增加。必须为 32 的倍数 (如 640、960)。</span>
+                </span>
+              </label>
               <input type="number" id="imgsz" v-model.number="form.imgsz" step="32" min="64" max="2048" required :disabled="isTraining" />
               <div class="form-desc">建议为32的倍数，默认960</div>
             </div>
