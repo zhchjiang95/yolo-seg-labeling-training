@@ -481,13 +481,11 @@
           <!-- 训练时的指标卡 -->
           <div v-if="isTraining" class="progress-stats-grid">
             <div class="stat-item eta-stat-item" :title="trainStatus.progress.eta_finish_time ? `全局预估: ${trainStatus.progress.eta_finish_time} (根据已完成轮次实际用时自适应推算)` : '根据已完成轮次实际用时自适应推算全部轮次所需时间'">
-              <div class="stat-header-row" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <span class="stat-label">预计剩余时间 (ETA)</span>
-                <span v-if="trainStatus.progress.eta_finish_time" class="eta-finish-tag">
-                  {{ trainStatus.progress.eta_finish_time }}
-                </span>
-              </div>
+              <span class="stat-label">预计剩余时间 (ETA)</span>
               <span class="stat-value" style="color: var(--warning);">{{ trainStatus.progress.eta }}</span>
+              <span v-if="trainStatus.progress.eta_finish_time" class="eta-finish-tag">
+                {{ trainStatus.progress.eta_finish_time }}
+              </span>
             </div>
             <div class="stat-item">
               <span class="stat-label">Box Loss</span>
