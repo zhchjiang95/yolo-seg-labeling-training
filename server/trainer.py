@@ -28,11 +28,21 @@ class YOLOTrainer:
         self.dataset = ""  # 当前正在训练的数据集名称
         self.train_meta = {}  # 当前运行的训练超参数与策略配置
         self.dataset_summary = None  # 当前运行的数据集概况与分布情况
+        
+        # 全局训练耗时与自适应 ETA 动态推算变量
+        self.train_start_time: Optional[float] = None  # 训练循环开始时间戳
+        self.current_epoch_start_time: Optional[float] = None  # 当前 Epoch 开始时间戳
+        self.epoch_durations: list = []  # 记录已完成的每轮耗时（秒）
+        self.last_epoch: int = 0
+        self.in_epoch_ratio: float = 0.0  # 当前轮内部的 batch 进度比例 (0.0 ~ 1.0)
+
         self.progress = {
             "epoch": 0,
             "total_epochs": 0,
             "percent": 0,
             "eta": "--:--:--",
+            "eta_finish_time": "",
+            "epoch_duration_avg": 0.0,
             "box_loss": 0.0,
             "seg_loss": 0.0,
             "cls_loss": 0.0,
@@ -93,12 +103,22 @@ class YOLOTrainer:
             self.dataset = train_config.get("dataset", "default")  # 记录当前训练的数据集
             self.train_meta = {}
             self.dataset_summary = None
+            
+            # 重置计时与耗时数据
+            self.train_start_time = None
+            self.current_epoch_start_time = None
+            self.epoch_durations = []
+            self.last_epoch = 0
+            self.in_epoch_ratio = 0.0
+
             # 初始化进度信息
             self.progress = {
                 "epoch": 0,
                 "total_epochs": train_config.get("epochs", 300),
                 "percent": 0,
                 "eta": "--:--:--",
+                "eta_finish_time": "准备中...",
+                "epoch_duration_avg": 0.0,
                 "box_loss": 0.0,
                 "seg_loss": 0.0,
                 "cls_loss": 0.0,
@@ -374,13 +394,19 @@ if __name__ == '__main__':
 
             with self.lock:
                 if self.state == "stopped":
+                    self.progress["eta"] = "--:--:--"
+                    self.progress["eta_finish_time"] = "已停止"
                     self._write_log("[SYSTEM] 训练已被用户手动停止。\n")
                 elif retcode == 0:
                     self.state = "completed"
                     self.progress["percent"] = 100
+                    self.progress["eta"] = "00:00:00"
+                    self.progress["eta_finish_time"] = "已完成"
                     self._write_log("[SYSTEM] 训练成功结束。\n")
                 else:
                     self.state = "failed"
+                    self.progress["eta"] = "--:--:--"
+                    self.progress["eta_finish_time"] = "异常退出"
                     self._write_log(f"[SYSTEM] 训练子进程异常退出，状态码: {retcode}\n")
 
         except Exception as e:
@@ -411,45 +437,159 @@ if __name__ == '__main__':
         except Exception:
             pass
 
+    def _update_eta_internal(self, curr_epoch: int, total_epochs: int, in_epoch_ratio: float):
+        """
+        基于已完成轮次实际耗时，自适应平滑推算整个训练的全局剩余时间 (Global ETA) 与完成时间点。
+        彻底替代原先 Ultralytics tqdm 默认仅输出单步/单轮几十秒局部倒计时的问题。
+        """
+        import time
+        now = time.time()
+        if self.train_start_time is None:
+            self.train_start_time = now
+            self.current_epoch_start_time = now
+            self.progress["eta"] = "估算中..."
+            self.progress["eta_finish_time"] = ""
+            return
+
+        # 当前已完成的等效轮数（例如跑完第 3 轮且第 4 轮已完成 35%，则为 3.35）
+        effective_done = max(0.001, (curr_epoch - 1) + in_epoch_ratio)
+        effective_remain = max(0.0, total_epochs - effective_done)
+
+        if effective_remain <= 0:
+            self.progress["eta"] = "00:00:00"
+            self.progress["eta_finish_time"] = "即将完成"
+            return
+
+        elapsed_total = now - self.train_start_time
+        global_avg_epoch = elapsed_total / effective_done
+
+        if len(self.epoch_durations) > 0:
+            # 已跑完至少 1 轮完整 validation
+            # 排除第 1 轮预热偏差：如果完成轮次 > 1，优先采用第 2 轮以后的数据计算平均
+            valid_durations = self.epoch_durations[1:] if len(self.epoch_durations) > 1 else self.epoch_durations
+            recent_durations = valid_durations[-8:]  # 取最近 8 轮滑动窗口，自适应硬件负载与发热降频波动
+            recent_avg = sum(recent_durations) / len(recent_durations)
+            # 80% 权重给近期稳定速度，20% 权重给全局总均速
+            avg_epoch_sec = 0.8 * recent_avg + 0.2 * global_avg_epoch
+        else:
+            # 尚在第 1 轮中，若刚开始（小于 5% 进度或耗时小于 8 秒），处于环境加载期，先提示估算中
+            if effective_done < 0.05 or elapsed_total < 8:
+                self.progress["eta"] = "估算中..."
+                self.progress["eta_finish_time"] = ""
+                return
+            avg_epoch_sec = global_avg_epoch
+
+        self.progress["epoch_duration_avg"] = round(avg_epoch_sec, 1)
+
+        # 全局预计剩余总秒数
+        remaining_sec = int(effective_remain * avg_epoch_sec)
+
+        # 1. 格式化主显示 ETA（标准时分秒或超长天数）
+        hrs = remaining_sec // 3600
+        mins = (remaining_sec % 3600) // 60
+        secs = remaining_sec % 60
+
+        if hrs >= 24:
+            days = hrs // 24
+            sub_hrs = hrs % 24
+            eta_str = f"{days}天{sub_hrs}小时"
+        elif hrs > 0:
+            eta_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+        else:
+            eta_str = f"{mins:02d}:{secs:02d}"
+
+        self.progress["eta"] = eta_str
+
+        # 2. 计算预计结束的具体时刻（如 "预计今日 14:35 结束"）
+        finish_ts = now + remaining_sec
+        finish_dt = time.localtime(finish_ts)
+        today_dt = time.localtime(now)
+
+        day_diff = finish_dt.tm_yday - today_dt.tm_yday
+        if finish_dt.tm_year > today_dt.tm_year:
+            day_diff += 365
+
+        time_part = time.strftime("%H:%M", finish_dt)
+        if day_diff == 0:
+            finish_str = f"预计今日 {time_part} 结束"
+        elif day_diff == 1:
+            finish_str = f"预计明日 {time_part} 结束"
+        elif day_diff == 2:
+            finish_str = f"预计后天 {time_part} 结束"
+        else:
+            finish_str = f"预计 {time.strftime('%m-%d %H:%M', finish_dt)} 结束"
+
+        self.progress["eta_finish_time"] = finish_str
+
     def _parse_log_line(self, line: str):
         """
         正则解析控制台日志，提取指标和训练 Epoch
         """
-        # 1. 尝试匹配 tqdm 进度条的 ETA 信息，形如 "[00:45<02:30, 4.51it/s]" 或 Ultralytics 独特的 "10.0s<50.0s"、"1:15<2:30"
-        # 移到最前面，且匹配成功后不 return，以防止在一行同时包含 Epoch 进度和进度条时被提前拦截
-        eta_match = re.search(r'\b([0-9:.]+s?)<([0-9:.]+s?)', line)
-        if eta_match:
-            with self.lock:
-                self.progress["eta"] = eta_match.group(2)
+        import time
 
-
-        # 2. 尝试匹配训练进度（例如 Epoch 进度）
-        # 很多情况下，tqdm 进度条的前面会包含 \r 或者终端控制符，所以用 search 代替 match
-        # 匹配类似: "  1/300      1.24G      1.123      1.456     0.9876      1.221         32        960:"
-        epoch_search = re.search(r'(\d+)/(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+):', line)
+        # 1. 尝试匹配训练进度（例如 Epoch 进度）
+        # 匹配类似: "      4/300      2.34G      1.152      1.432     0.8765      1.123         45        960:  60%|██████    | 20/33"
+        epoch_search = re.search(r'(\d+)/(\d+)\s+([^\r\n:]+?):', line)
         if epoch_search:
             try:
                 curr_epoch = int(epoch_search.group(1))
                 total_epochs = int(epoch_search.group(2))
+                raw_tokens = epoch_search.group(3).split()
                 
-                # 更新进度结构
+                # 尝试从该行提取当前 Epoch 内部的细粒度批次进度比例
+                in_ratio = self.in_epoch_ratio
+                pct_match = re.search(r':\s*(\d+)%', line)
+                if pct_match:
+                    in_ratio = min(0.99, max(0.0, int(pct_match.group(1)) / 100.0))
+                else:
+                    step_match = re.search(r'(\d+)/(\d+)\s+\[', line)
+                    if step_match:
+                        s_curr, s_tot = int(step_match.group(1)), int(step_match.group(2))
+                        if s_tot > 0:
+                            in_ratio = min(0.99, max(0.0, s_curr / s_tot))
+
                 with self.lock:
+                    self.in_epoch_ratio = in_ratio
                     self.progress["epoch"] = curr_epoch
                     self.progress["total_epochs"] = total_epochs
-                    if total_epochs > 0:
-                        self.progress["percent"] = int((curr_epoch - 1) / total_epochs * 100)
                     
-                    # 捕获各种 Loss 值
-                    # YOLOv8 Seg 训练字段顺序: Epoch, GPU_mem, box_loss, seg_loss, cls_loss, dfl_loss
-                    self.progress["box_loss"] = float(epoch_search.group(4))
-                    self.progress["seg_loss"] = float(epoch_search.group(5))
-                    self.progress["cls_loss"] = float(epoch_search.group(6))
-                    self.progress["dfl_loss"] = float(epoch_search.group(7))
+                    # 轮次切换检测（记录轮次耗时）
+                    now = time.time()
+                    if self.train_start_time is None:
+                        self.train_start_time = now
+                        self.current_epoch_start_time = now
+                        self.last_epoch = curr_epoch
+                    elif curr_epoch > self.last_epoch:
+                        if self.current_epoch_start_time:
+                            dur = now - self.current_epoch_start_time
+                            if dur > 3:  # 排除异常瞬间抖动
+                                self.epoch_durations.append(dur)
+                        self.current_epoch_start_time = now
+                        self.last_epoch = curr_epoch
+
+                    # 动态计算全局百分比（包含当前 Epoch 内的细粒度步数）
+                    if total_epochs > 0:
+                        overall_pct = ((curr_epoch - 1) + in_ratio) / total_epochs * 100
+                        self.progress["percent"] = min(99, max(0, int(overall_pct)))
+                    
+                    # 捕获各种 Loss 值 (基于 tokens 自适应容错)
+                    # YOLOv8 Seg 字段顺序: GPU_mem, box_loss, seg_loss, cls_loss, dfl_loss, instances, size
+                    if len(raw_tokens) >= 5:
+                        try:
+                            self.progress["box_loss"] = float(raw_tokens[1])
+                            self.progress["seg_loss"] = float(raw_tokens[2])
+                            self.progress["cls_loss"] = float(raw_tokens[3])
+                            self.progress["dfl_loss"] = float(raw_tokens[4])
+                        except (ValueError, IndexError):
+                            pass
+
+                    # 触发全局剩余时间精准更新
+                    self._update_eta_internal(curr_epoch, total_epochs, in_ratio)
             except Exception:
                 pass
             return
 
-        # 3. 尝试匹配指标行（通常在每个 Epoch 结束的 validation 阶段输出）
+        # 2. 尝试匹配指标行（通常在每个 Epoch 结束的 validation 阶段输出）
         # 例如: "all        103        103      0.823      0.791      0.812      0.543"
         # 使用 search 搜寻以避开可能的控制码
         metric_search = re.search(r'all\s+\d+\s+\d+\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+))?', line)
@@ -466,9 +606,23 @@ if __name__ == '__main__':
                     self.progress["mr"] = val2
                     self.progress["map50"] = val3
                     self.progress["map50_95"] = val4
-                    # 此时该 Epoch 结束了，更新 percent 为当前 Epoch 完成度
-                    if self.progress["total_epochs"] > 0:
-                        self.progress["percent"] = int(self.progress["epoch"] / self.progress["total_epochs"] * 100)
+
+                    # 验证阶段结束，说明当前 Epoch 100% 完成
+                    curr_epoch = self.progress.get("epoch", 1)
+                    total_epochs = self.progress.get("total_epochs", 300)
+                    now = time.time()
+                    if self.current_epoch_start_time:
+                        dur = now - self.current_epoch_start_time
+                        if dur > 3:
+                            self.epoch_durations.append(dur)
+                    self.current_epoch_start_time = now
+                    self.in_epoch_ratio = 1.0
+
+                    if total_epochs > 0:
+                        self.progress["percent"] = min(100, int(curr_epoch / total_epochs * 100))
+
+                    # 触发全局剩余时间精准更新
+                    self._update_eta_internal(curr_epoch, total_epochs, 1.0)
             except Exception:
                 pass
             return
