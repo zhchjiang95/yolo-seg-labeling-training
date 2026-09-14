@@ -4,6 +4,7 @@ import sys
 import time
 import gc
 import asyncio
+import threading
 import psutil
 import cv2
 import numpy as np
@@ -101,6 +102,14 @@ async def lifespan(app: FastAPI):
         if "predictor" in globals():
             predictor.unload_idle_models(timeout=0)
         print("[ModelManager] 所有模型已卸载，后台清理任务已停止")
+
+        # 终止并清理训练任务，确保子进程彻底退出并回收 GPU 显存
+        if "trainer" in globals() and trainer:
+            try:
+                trainer.stop_training()
+                print("[Trainer] 后台训练子进程已彻底终止并清理")
+            except Exception as e:
+                print(f"[Trainer] 终止训练子进程异常: {e}")
 
 app = FastAPI(title="YOLO26s-seg 训练控制台后端 API", lifespan=lifespan)
 
@@ -325,19 +334,54 @@ def create_dataset(req: CreateDatasetRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建数据集失败: {str(e)}")
 
-@app.get("/api/sysinfo")
-def get_sysinfo(dataset: str = "default"):
-    """获取服务器系统硬件和数据集概要信息"""
-    # 1. 硬件信息
-    cpu_percent = psutil.cpu_percent(interval=None)
-    # 使用当前进程 RSS 内存，而非系统全局内存
-    # 这样能真实反映模型加载/卸载对服务进程的内存影响
-    process = psutil.Process()
-    proc_mem = process.memory_info()
-    proc_mem_used_gb = round(proc_mem.rss / (1024 ** 3), 2)
-    sys_memory = psutil.virtual_memory()
-    
-    # 2. GPU 显存与硬件信息精准采集
+# ==========================================
+# 系统状态轻量安全采集器（带缓存保护，彻底杜绝 GPU 驱动阻塞卡死）
+# ==========================================
+_sysinfo_cache_lock = threading.Lock()
+_last_sysinfo_time = 0.0
+_cached_sysinfo_data: Dict[str, Any] = {
+    "cpu_percent": 0.0,
+    "memory_percent": 0.0,
+    "memory_used_gb": 0.0,
+    "sys_memory_used_gb": 0.0,
+    "memory_total_gb": 0.0,
+    "gpu_available": False,
+    "gpu_name": "N/A",
+    "gpu_memory_used_gb": 0.0,
+    "gpu_memory_total_gb": 0.0,
+    "gpu_memory_percent": 0.0,
+    "gpu_memory_used_mb": 0.0,
+    "gpu_memory_total_mb": 0.0,
+    "dataset_status": "checking",
+    "dataset_size_mb": 0.0,
+    "dataset_path": "初始化中..."
+}
+
+def _collect_sysinfo_internal(dataset: str = "default") -> Dict[str, Any]:
+    """底层安全采集系统硬件与数据集状态"""
+    cpu_percent = 0.0
+    proc_mem_used_gb = 0.0
+    sys_memory = None
+    try:
+        cpu_percent = psutil.cpu_percent(interval=None)
+        process = psutil.Process()
+        proc_mem = process.memory_info()
+        proc_mem_used_gb = round(proc_mem.rss / (1024 ** 3), 2)
+        sys_memory = psutil.virtual_memory()
+    except Exception:
+        pass
+
+    if sys_memory is None:
+        try:
+            sys_memory = psutil.virtual_memory()
+        except Exception:
+            class DummyMem:
+                percent = 0.0
+                used = 0
+                total = 1024 ** 3
+            sys_memory = DummyMem()
+
+    # 2. GPU 显存与硬件信息精准采集（加入超时与驱动保护）
     gpu_available = False
     gpu_name = "N/A"
     gpu_memory_used_gb = 0.0
@@ -346,47 +390,31 @@ def get_sysinfo(dataset: str = "default"):
     gpu_memory_used_mb = 0.0
     gpu_memory_total_mb = 0.0
 
-    # 优先方案：通过 PyTorch 的 CUDA 驱动底层接口获取整卡物理显存
     try:
         import torch
-        gpu_available = torch.cuda.is_available()
-        if gpu_available:
+        if torch.cuda.is_available():
+            gpu_available = True
             gpu_name = torch.cuda.get_device_name(0)
             try:
-                # mem_get_info 返回 (free_bytes, total_bytes)，反映整张显卡真实物理显存
-                # 能真实统计训练子进程、推理进程以及后台任务的显存占用
                 free_bytes, total_bytes = torch.cuda.mem_get_info(0)
                 used_bytes = max(0, total_bytes - free_bytes)
-
                 gpu_memory_total_gb = round(total_bytes / (1024 ** 3), 2)
                 gpu_memory_used_gb = round(used_bytes / (1024 ** 3), 2)
                 gpu_memory_percent = round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0.0
-
                 gpu_memory_used_mb = round(used_bytes / (1024 ** 2), 1)
                 gpu_memory_total_mb = round(total_bytes / (1024 ** 2), 1)
             except Exception:
-                # 兜底：使用 PyTorch 设备属性总显存与分配/保留显存
-                total_mem = torch.cuda.get_device_properties(0).total_mem
-                alloc_mem = torch.cuda.memory_allocated(0)
-                reserved_mem = torch.cuda.memory_reserved(0)
-                used_mem = max(alloc_mem, reserved_mem)
-
-                gpu_memory_total_gb = round(total_mem / (1024 ** 3), 2)
-                gpu_memory_used_gb = round(used_mem / (1024 ** 3), 2)
-                gpu_memory_percent = round((used_mem / total_mem) * 100, 1) if total_mem > 0 else 0.0
-
-                gpu_memory_used_mb = round(used_mem / (1024 ** 2), 1)
-                gpu_memory_total_mb = round(total_mem / (1024 ** 2), 1)
+                pass
     except Exception:
         pass
 
-    # 兜底方案：如果 PyTorch 未能识别到 CUDA，但系统有 NVIDIA 驱动与 nvidia-smi
+    # 兜底方案：nvidia-smi
     if not gpu_available:
         try:
             import subprocess
             res = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name,memory.used,memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=1
+                capture_output=True, text=True, timeout=0.8
             )
             if res.returncode == 0 and res.stdout.strip():
                 first_line = res.stdout.strip().split("\n")[0]
@@ -404,7 +432,7 @@ def get_sysinfo(dataset: str = "default"):
         except Exception:
             pass
 
-    # 3. 数据集状态判定 (zip 或者是本地标注目录)
+    # 3. 数据集状态判定
     zip_file = WORKSPACE_DIR / "datasets" / "赶猪通道图集_yolo.zip"
     local_img_dir = WORKSPACE_DIR / "datasets" / "labeling" / dataset / "images"
 
@@ -412,19 +440,21 @@ def get_sysinfo(dataset: str = "default"):
     dataset_size_mb = 0.0
     dataset_path_str = "无"
 
-    # 检查本地标注图片数
-    local_images_count = 0
-    if local_img_dir.exists():
-        local_images_count = len([f for f in local_img_dir.iterdir() if f.is_file() and f.suffix.lower() in {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}])
+    try:
+        local_images_count = 0
+        if local_img_dir.exists():
+            local_images_count = len([f for f in local_img_dir.iterdir() if f.is_file() and f.suffix.lower() in {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}])
 
-    if zip_file.exists():
-        dataset_status = "ready"
-        dataset_size_mb = round(zip_file.stat().st_size / (1024 ** 2), 2)
-        dataset_path_str = zip_file.name
-    elif local_images_count > 0:
-        dataset_status = "ready"
-        dataset_size_mb = 0.0
-        dataset_path_str = f"本地标注数据集 [{dataset}] ({local_images_count}张图片)"
+        if zip_file.exists():
+            dataset_status = "ready"
+            dataset_size_mb = round(zip_file.stat().st_size / (1024 ** 2), 2)
+            dataset_path_str = zip_file.name
+        elif local_images_count > 0:
+            dataset_status = "ready"
+            dataset_size_mb = 0.0
+            dataset_path_str = f"本地标注数据集 [{dataset}] ({local_images_count}张图片)"
+    except Exception:
+        pass
 
     return {
         "cpu_percent": cpu_percent,
@@ -443,6 +473,25 @@ def get_sysinfo(dataset: str = "default"):
         "dataset_size_mb": dataset_size_mb,
         "dataset_path": dataset_path_str
     }
+
+@app.get("/api/sysinfo")
+def get_sysinfo(dataset: str = "default"):
+    """获取服务器系统硬件和数据集概要信息（带 1.5s 缓存防刷死）"""
+    global _last_sysinfo_time, _cached_sysinfo_data
+    now = time.time()
+    
+    # 若缓存未过期（1.5 秒内），直接秒级返回缓存，杜绝高频并发争抢 CUDA 驱动
+    with _sysinfo_cache_lock:
+        if now - _last_sysinfo_time < 1.5 and _cached_sysinfo_data.get("dataset_status") != "checking":
+            return _cached_sysinfo_data.copy()
+
+    # 重新采集并更新缓存
+    fresh_data = _collect_sysinfo_internal(dataset)
+    with _sysinfo_cache_lock:
+        _last_sysinfo_time = now
+        _cached_sysinfo_data = fresh_data
+        
+    return fresh_data
 
 # ==========================================
 # 标注模块接口及模型预测器
@@ -1968,6 +2017,7 @@ async def get_logs_stream(request: Request):
                 line = f.readline()
                 if line:
                     yield f"data: {line.rstrip()}\n\n"
+                    await asyncio.sleep(0.005)  # 主动释放微小时间片给主事件循环，避免刷屏时阻塞其它 HTTP 请求
                 else:
                     # 如果进程已经结束并且文件也读完了，就退出流
                     status = trainer.get_status()
@@ -2013,4 +2063,6 @@ if __name__ == "__main__":
     log_config["loggers"]["uvicorn.access"]["propagate"] = False
     
     # 端口绑定为 9523
-    uvicorn.run("main:app", host="0.0.0.0", port=9523, log_config=log_config, reload=True)
+    # 生产与长效训练场景默认彻底关闭 reload 以防运行时脚本或日志变动触发子进程强退卡死
+    reload_flag = os.environ.get("UVICORN_RELOAD", "false").lower() == "true"
+    uvicorn.run("main:app", host="0.0.0.0", port=9523, log_config=log_config, reload=reload_flag)

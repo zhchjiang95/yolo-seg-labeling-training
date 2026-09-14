@@ -137,6 +137,17 @@ if [ -n "$PORT_PIDS" ]; then
     exit 1
 fi
 
+# 强制清理 3：扫描并强杀残留的孤儿训练进程 temp_run.py，避免显存被霸占引发 CUDA OOM
+TRAIN_PIDS=$(pgrep -f "temp_run.py" 2>/dev/null)
+if [ -n "$TRAIN_PIDS" ]; then
+    CLEAN_TRAIN_STR=$(echo "$TRAIN_PIDS" | tr '\n' ' ')
+    echo "[WARN] 检测到历史残留的孤儿训练进程正在霸占显存 (PID: $CLEAN_TRAIN_STR)，正在清理以释放 GPU 显存..."
+    for tp in $TRAIN_PIDS; do
+        kill -9 "$tp" 2>/dev/null
+    done
+    sleep 0.5
+fi
+
 # 6. 正式拉起服务
 echo "[START] 正在启动 FastAPI 后端服务..."
 echo "[START] Python 解释器: $PYTHON_BIN"

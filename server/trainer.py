@@ -14,9 +14,13 @@ class YOLOTrainer:
     """
     def __init__(self, workspace_dir: str):
         self.workspace_dir = Path(workspace_dir)
-        self.log_file = self.workspace_dir / "server" / "train.log"
-        self.config_file = self.workspace_dir / "server" / "temp_config.json"
-        self.runner_file = self.workspace_dir / "server" / "temp_run.py"
+        # 运行时文件（临时训练脚本、训练日志等）彻底放置在根目录 runs/runtime 下，完全移出 server/ 源码目录
+        # 从而在物理层面上 100% 杜绝因 Uvicorn reload 监听 server/ 目录误触发热重载导致训练强退
+        runtime_dir = self.workspace_dir / "runs" / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        self.log_file = runtime_dir / "train.log"
+        self.config_file = runtime_dir / "temp_config.json"
+        self.runner_file = runtime_dir / "temp_run.py"
         
         # 线程安全的状态变量
         self.state = "idle"  # 状态包括: idle (空闲), preparing (数据集准备中), training (训练中), completed (已完成), failed (失败), stopped (已停止)
@@ -111,29 +115,40 @@ class YOLOTrainer:
 
     def stop_training(self) -> bool:
         """
-        强行中止当前运行的训练进程
+        强行中止当前运行的训练进程（连同子进程树/DataLoader workers 彻底清理以释放显存）
         """
         with self.lock:
             if self.state not in ["preparing", "training"]:
                 return False
             
             self.state = "stopped"
-            if self.process:
+            if self.process and self.process.poll() is None:
+                pid = self.process.pid
                 try:
-                    # Windows 系统下使用 taskkill 命令递归杀死子进程树，防止僵尸 YOLO 进程残留
                     import platform
                     if platform.system() == "Windows":
-                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.process.pid)], capture_output=True)
+                        # Windows 系统下使用 taskkill 命令递归杀死整棵子进程树，防止僵尸 YOLO 进程残留
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
                     else:
-                        # Linux 下优雅终止并回收到期
-                        self.process.terminate()
-                        self.process.wait(timeout=3)
+                        # Linux 系统下向进程组发送 SIGTERM，并在超时未响应后强制 SIGKILL，彻底回收 GPU 显存
+                        import signal
+                        try:
+                            pgid = os.getpgid(pid)
+                            os.killpg(pgid, signal.SIGTERM)
+                            try:
+                                self.process.wait(timeout=3)
+                            except subprocess.TimeoutExpired:
+                                os.killpg(pgid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        except Exception:
+                            self.process.terminate()
+                            try:
+                                self.process.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                self.process.kill()
                 except Exception as e:
                     print(f"强行中止子进程失败: {e}")
-                    try:
-                        self.process.kill()
-                    except Exception:
-                        pass
             return True
 
     def _run_train_flow(self, config: Dict[str, Any]):
@@ -304,15 +319,24 @@ if __name__ == '__main__':
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
             
+            # 在 Linux 系统下设置 preexec_fn=os.setsid 创建独立进程会话组，
+            # 这样停止或异常退出时可通过 os.killpg 连同 PyTorch DataLoader workers 整体彻底强杀
+            import platform
+            popen_kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "encoding": 'utf-8',
+                "bufsize": 1,
+                "cwd": str(self.workspace_dir),
+                "env": env
+            }
+            if platform.system() != "Windows":
+                popen_kwargs["preexec_fn"] = os.setsid
+
             self.process = subprocess.Popen(
                 [sys.executable, str(self.runner_file)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding='utf-8',
-                bufsize=1,
-                cwd=str(self.workspace_dir),
-                env=env
+                **popen_kwargs
             )
 
             # 定义实时按字符读取以兼顾 \r 和 \n 的生成器，从而即时捕捉 tqdm 进度条更新

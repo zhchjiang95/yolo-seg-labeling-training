@@ -74,11 +74,24 @@ if [ -n "$PORT_PIDS" ]; then
     KILLED_ANY=1
 fi
 
-# 3. 输出停止结果
+# 3. 深度扫描并强杀可能残留的 YOLO 孤儿训练子进程（彻底回收 GPU 显存）
+TRAIN_PIDS=$(pgrep -f "temp_run.py" 2>/dev/null)
+if [ -n "$TRAIN_PIDS" ]; then
+    CLEAN_TRAIN_STR=$(echo "$TRAIN_PIDS" | tr '\n' ' ')
+    echo "[STOP] 检测到孤儿训练进程正在后台占用 GPU 显存 (PID: $CLEAN_TRAIN_STR)，正在强制回收..."
+    for tp in $TRAIN_PIDS; do
+        kill -9 "$tp" 2>/dev/null
+    done
+    sleep 0.5
+    echo "[SUCCESS] 已强制终止孤儿训练进程，GPU 显存已成功释放！"
+    KILLED_ANY=1
+fi
+
+# 4. 输出停止结果
 PORT_PIDS=$(get_pids_on_port "$PORT")
 if [ -z "$PORT_PIDS" ]; then
     if [ "$KILLED_ANY" -eq 1 ]; then
-        echo "[SUCCESS] 服务已完全停止，端口 $PORT 已成功释放！"
+        echo "[SUCCESS] 服务与训练进程已完全停止，端口 $PORT 与 GPU 资源已成功释放！"
     else
         echo "[INFO] 服务未在运行（端口 $PORT 未被占用）。"
     fi
