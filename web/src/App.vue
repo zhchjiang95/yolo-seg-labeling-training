@@ -31,8 +31,59 @@
       </TransitionGroup>
     </div>
 
-    <!-- 头部：标题与基础状态 -->
-    <header>
+    <!-- 独立标注工作台专属顶栏 -->
+    <header v-if="isStandaloneMode" class="standalone-header">
+      <div class="standalone-header-left">
+        <div class="standalone-logo">
+          <svg style="width: 20px; height: 20px; color: var(--primary);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          <span style="font-weight: 700; font-size: 16px; letter-spacing: -0.01em;">智能标注工作台</span>
+          <span class="standalone-badge">独立微模式</span>
+        </div>
+        <div class="standalone-key-box" :title="'当前图片 Key: ' + standaloneKey">
+          <span style="color: var(--text-muted); font-size: 11px; font-weight: 500;">KEY:</span>
+          <code class="standalone-key-code">{{ standaloneKey || '未指定' }}</code>
+        </div>
+      </div>
+
+      <div class="standalone-header-center">
+        <span class="standalone-hint">
+          <kbd>Space</kbd> 抓手拖动 | <kbd>Ctrl+S</kbd> 完成回传 | <kbd>Esc</kbd> 取消退出
+        </span>
+      </div>
+
+      <div class="standalone-header-right">
+        <button class="theme-toggle-btn" @click="toggleTheme" title="切换主题">
+          <svg v-if="!isDark" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg v-else style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+        </button>
+        <button class="standalone-cancel-btn" @click="handleStandaloneCancel" title="放弃修改并关闭窗口">
+          取消
+        </button>
+        <button class="standalone-save-btn" @click="handleStandaloneSave" :disabled="!currentImage || standaloneLoading" title="保存标注并回传给父页面">
+          <svg style="width: 15px; height: 15px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          完成并回传
+        </button>
+      </div>
+    </header>
+
+    <!-- 常规头部：标题与基础状态 -->
+    <header v-if="!isStandaloneMode">
       <div>
         <h1>
           <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -71,8 +122,8 @@
       </div>
     </header>
 
-    <!-- TAB 导航与数据集选择栏 -->
-    <div class="tabs-container">
+    <!-- TAB 导航与数据集选择栏 (独立模式下完全隐藏) -->
+    <div v-if="!isStandaloneMode" class="tabs-container">
       <div class="nav-tabs">
         <div class="tab-item" :class="{ active: currentTab === 'train' }" @click="switchTab('train')">
           <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -799,9 +850,9 @@
     <!-- ========================================== -->
     <!-- TAB 2: 数据标注平台                           -->
     <!-- ========================================== -->
-    <div v-else class="annotator-grid">
-      <!-- 1. 左栏：图片管理 -->
-      <div class="glass-card file-list-card">
+    <div v-else class="annotator-grid" :class="{ 'standalone-grid': isStandaloneMode }">
+      <!-- 1. 左栏：图片管理 (独立微模式下隐藏) -->
+      <div v-if="!isStandaloneMode" class="glass-card file-list-card">
         <div class="section-title" style="margin-bottom: 12px; font-size: 16px;">
           图集列表 (共 {{ imageList.length }} 张)
         </div>
@@ -1225,15 +1276,15 @@
             </button>
           </div>
 
-          <!-- 清理与保存动作组 -->
+          <!-- 清理与保存动作组 (独立微模式下仅保留清空，保存动作统一由专属顶栏承载) -->
           <div style="display: flex; gap: 8px;">
-            <button class="tool-btn" @click="saveAsNegative" :disabled="!currentImage" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; border-color: transparent;" title="保存此图片为负样本，标注将清空且重命名图片">
+            <button v-if="!isStandaloneMode" class="tool-btn" @click="saveAsNegative" :disabled="!currentImage" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; border-color: transparent;" title="保存此图片为负样本，标注将清空且重命名图片">
               保存为负样本
             </button>
             <button class="tool-btn" @click="clearPolygons" :disabled="polygons.length === 0" title="清空当前图片所有多边形">
               清空
             </button>
-            <button class="tool-btn active" @click="saveAnnotations" :disabled="!currentImage" style="background: var(--primary-gradient);">
+            <button v-if="!isStandaloneMode" class="tool-btn active" @click="saveAnnotations" :disabled="!currentImage" style="background: var(--primary-gradient);">
               保存标注
             </button>
           </div>
@@ -1370,7 +1421,21 @@
           </transition>
 
           <div v-if="!currentImage" style="color: var(--text-muted); text-align: center; font-size: 14px; margin-top: 10%;">
-            请在左侧列表中选择一张图片开始标注
+            <template v-if="standaloneLoading">
+              <div class="spinner" style="width: 24px; height: 24px; margin: 0 auto 12px; border-color: var(--primary); border-top-color: transparent;"></div>
+              <div style="font-weight: 500; color: var(--text-primary);">正在拉取外部图片并初始化沙箱环境...</div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">首次加载可能需几秒下载并解析图片</div>
+            </template>
+            <template v-else-if="isStandaloneMode">
+              <div style="font-size: 32px; margin-bottom: 12px;">🖼️</div>
+              <div style="font-weight: 600; font-size: 16px; color: var(--text-primary); margin-bottom: 6px;">等待载入待标注图片</div>
+              <div style="font-size: 13px; color: var(--text-muted); max-width: 420px; margin: 0 auto; line-height: 1.6;">
+                请在 URL 中附带 <code style="color: var(--primary); background: var(--input-bg); padding: 2px 6px; border-radius: 4px;">image=URL</code> 参数，或由父系统页面通过 <code style="color: var(--primary); background: var(--input-bg); padding: 2px 6px; border-radius: 4px;">postMessage</code> 投递图片数据。
+              </div>
+            </template>
+            <template v-else>
+              请在左侧列表中选择一张图片开始标注
+            </template>
           </div>
           
           <!-- 图片与 SVG 渲染包裹器，绑定平移、缩放与视角旋转 -->
@@ -1984,6 +2049,37 @@
                 立即开始训练
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 独立标注工作台：父窗口断连/单机测试时的 JSON 结果兜底查看与复制弹窗 -->
+    <Transition name="modal-fade">
+      <div v-if="showStandaloneCopyModal" class="modal-backdrop" @click="showStandaloneCopyModal = false">
+        <div class="modal-card" style="max-width: 620px; z-index: 9999;" @click.stop>
+          <div class="modal-header">
+            <h3 style="display: flex; align-items: center; gap: 8px;">
+              <svg style="width: 20px; height: 20px; color: var(--success);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              标注数据已就绪 (独立微模式)
+            </h3>
+            <button class="modal-close-btn" @click="showStandaloneCopyModal = false">×</button>
+          </div>
+          <div class="modal-body" style="padding: 16px 20px;">
+            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5;">
+              由于未检测到当前窗口的打开者（可能父页面已关闭、刷新或为直接 URL 访问），已为您打包生成标准标注 Payload。您可以直接复制保存：
+            </p>
+            <textarea 
+              readonly 
+              style="width: 100%; height: 220px; font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--text-primary); resize: vertical; box-sizing: border-box;"
+              :value="standaloneResultJson"
+            ></textarea>
+          </div>
+          <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 20px;">
+            <button class="btn btn-secondary" @click="showStandaloneCopyModal = false">关闭</button>
+            <button class="btn btn-primary" @click="copyStandaloneJson">一键复制 JSON 数据</button>
           </div>
         </div>
       </div>
@@ -3997,8 +4093,176 @@ const getNextImage = () => {
   }
 };
 
+// ==========================================
+// 独立/共享标注微模式 (Standalone Annotator) 核心逻辑
+// ==========================================
+const isStandaloneMode = ref(false);
+const standaloneKey = ref('');
+const standaloneImageUrl = ref('');
+const standaloneAutoClose = ref(true);
+const standaloneLoading = ref(false);
+const showStandaloneCopyModal = ref(false);
+const standaloneResultJson = ref('');
+
+// 初始化独立标注图片至后端沙箱
+const initStandaloneImage = async (key, imageUrl, imageBase64) => {
+  if (!imageUrl && !imageBase64) return;
+  standaloneLoading.value = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/labeling/prepare_external`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key: key || 'external_img',
+        image_url: imageUrl || undefined,
+        image_base64: imageBase64 || undefined
+      })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      currentDataset.value = '_temp';
+      currentImage.value = {
+        name: data.name,
+        mtime: data.mtime,
+        status: polygons.value.length > 0 ? 'labeled' : 'unlabeled',
+        label_count: polygons.value.length
+      };
+      initialPolygonsSnapshot.value = JSON.stringify(polygons.value || []);
+      showToast('图片载入就绪，可开始标注', 'success');
+    } else {
+      const err = await res.json();
+      showToast(`准备外部图片失败: ${err.detail || '接口报错'}`, 'error');
+    }
+  } catch (err) {
+    console.error('准备外部图片异常:', err);
+    showToast('无法连接后端服务准备图片', 'error');
+  } finally {
+    standaloneLoading.value = false;
+  }
+};
+
+// 监听并响应来自父窗口的 postMessage 握手或投递数据
+const handleStandaloneMessage = async (event) => {
+  if (!event.data || typeof event.data !== 'object') return;
+  const { type, key, imageUrl, imageBase64, classes: customClasses, annotations } = event.data;
+  
+  if (type === 'INIT_DATA') {
+    if (key) standaloneKey.value = key;
+    if (Array.isArray(customClasses) && customClasses.length > 0) {
+      classes.value = [...customClasses];
+      activeClassIndex.value = 0;
+    }
+    if (Array.isArray(annotations)) {
+      polygons.value = annotations.map(p => ({
+        class_id: p.class_id || 0,
+        points: p.points || []
+      }));
+      initialPolygonsSnapshot.value = JSON.stringify(polygons.value);
+    }
+    if (imageUrl || imageBase64) {
+      await initStandaloneImage(standaloneKey.value, imageUrl, imageBase64);
+    }
+  }
+};
+
+// 独立模式保存并回传标注数据
+const handleStandaloneSave = async () => {
+  if (!currentImage.value) {
+    showToast('当前未载入图片', 'warning');
+    return;
+  }
+
+  // 构造标准 Payload
+  const payload = {
+    type: 'ANNOTATOR_SAVE',
+    key: standaloneKey.value,
+    timestamp: Date.now(),
+    is_negative: polygons.value.length === 0,
+    image: {
+      name: currentImage.value.name,
+      width: imgNaturalWidth.value || 0,
+      height: imgNaturalHeight.value || 0
+    },
+    classes: [...classes.value],
+    polygons: polygons.value.map(p => ({
+      class_id: p.class_id,
+      class_name: classes.value[p.class_id] || '',
+      points: p.points
+    }))
+  };
+
+  // 必须深拷贝脱敏 Vue 3 响应式 Proxy，否则浏览器的 postMessage (structuredClone) 会报 DataCloneError: could not be cloned
+  const cleanPayload = JSON.parse(JSON.stringify(payload));
+
+  // 尝试静默清理沙箱临时图片
+  try {
+    await fetch(`${API_BASE}/api/labeling/image/${currentImage.value.name}?dataset=_temp`, {
+      method: 'DELETE'
+    });
+  } catch (e) {
+    console.warn('清理临时沙箱图片异常:', e);
+  }
+
+  // 检查是否存在父窗口 (window.opener)
+  if (window.opener && !window.opener.closed) {
+    window.opener.postMessage(cleanPayload, '*');
+    showToast('标注数据已保存并回传！', 'success');
+    if (standaloneAutoClose.value) {
+      setTimeout(() => {
+        window.close();
+      }, 500);
+    }
+  } else {
+    // 兜底：若父窗口已关闭，弹出复制弹窗供用户手动备份 JSON
+    standaloneResultJson.value = JSON.stringify(cleanPayload, null, 2);
+    showStandaloneCopyModal.value = true;
+    showToast('已生成标注数据，父窗口未连接，请点击复制', 'info');
+  }
+};
+
+// 独立模式取消标注并退出
+const handleStandaloneCancel = async () => {
+  if (hasUnsavedChanges.value) {
+    const confirmed = confirm('⚠️ 确定要取消并放弃本次标注吗？未保存的内容将丢失。');
+    if (!confirmed) return;
+  }
+
+  if (currentImage.value) {
+    try {
+      await fetch(`${API_BASE}/api/labeling/image/${currentImage.value.name}?dataset=_temp`, {
+        method: 'DELETE'
+      });
+    } catch (e) {}
+  }
+
+  if (window.opener && !window.opener.closed) {
+    window.opener.postMessage({
+      type: 'ANNOTATOR_CANCEL',
+      key: standaloneKey.value
+    }, '*');
+  }
+  window.close();
+};
+
+// 复制独立模式 JSON
+const copyStandaloneJson = async () => {
+  try {
+    await navigator.clipboard.writeText(standaloneResultJson.value);
+    showToast('已复制 JSON 数据到剪贴板！', 'success');
+  } catch (e) {
+    showToast('复制失败，请手动全选复制', 'error');
+  }
+};
+
 const saveAnnotations = async () => {
   if (!currentImage.value) return;
+  
+  // 独立标注微模式下拦截并执行回传退出
+  if (isStandaloneMode.value) {
+    await handleStandaloneSave();
+    return;
+  }
   
   // 主动让当前焦点元素失去焦点，防止空格键重复触发
   if (document.activeElement && typeof document.activeElement.blur === 'function') {
@@ -4249,17 +4513,26 @@ const handleKeyDown = (e) => {
     }
   }
 
+  // Ctrl+S / Cmd+S 快速保存标注（独立模式下直接回传）
+  if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    saveAnnotations();
+    return;
+  }
+
   if (e.key === ' ') {
     if (!isInput) {
       e.preventDefault(); // 阻止空格键触发当前焦点按钮的点击事件（标准 HTML 行为中，聚焦按钮按空格会触发 click）
       spacePressed.value = true;
     }
   } else if (e.key === 'Escape') {
-    if (activeTool.value === 'draw') {
+    if (activeTool.value === 'draw' && activePolygonPoints.value.length > 0) {
       activePolygonPoints.value = [];
-    } else if (activeTool.value === 'sam') {
+    } else if (activeTool.value === 'sam' && (samPrompts.value.length > 0 || samPreviewPolygon.value)) {
       samPrompts.value = [];
       samPreviewPolygon.value = null;
+    } else if (isStandaloneMode.value && !isInput) {
+      handleStandaloneCancel();
     }
   } else if (e.key === 'Enter') {
     if (activeTool.value === 'draw') {
@@ -4374,11 +4647,75 @@ onMounted(async () => {
   }
   updateThemeClass();
 
-  await fetchDatasets();
-  await fetchClasses();
+  // 检查是否为独立标注微模式
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('mode') === 'standalone') {
+    isStandaloneMode.value = true;
+    currentTab.value = 'label';
+    currentDataset.value = '_temp';
+    
+    standaloneKey.value = urlParams.get('key') || 'external_image';
+    standaloneImageUrl.value = urlParams.get('image') || '';
+    if (urlParams.get('autoClose') === 'false') {
+      standaloneAutoClose.value = false;
+    }
+    
+    // 解析 URL classes 参数 (如 classes=缺陷A,缺陷B 或 JSON 数组)
+    const classesParam = urlParams.get('classes');
+    if (classesParam) {
+      try {
+        if (classesParam.startsWith('[') && classesParam.endsWith(']')) {
+          classes.value = JSON.parse(classesParam);
+        } else {
+          classes.value = classesParam.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      } catch (e) {
+        console.warn('解析自定义类别失败:', e);
+      }
+    } else {
+      classes.value = ['目标'];
+    }
+    activeClassIndex.value = 0;
+
+    // 解析 URL annotations 参数 (历史标注回显)
+    const annotParam = urlParams.get('annotations');
+    if (annotParam) {
+      try {
+        const parsedAnnots = JSON.parse(annotParam);
+        if (Array.isArray(parsedAnnots)) {
+          polygons.value = parsedAnnots.map(p => ({
+            class_id: p.class_id || 0,
+            points: p.points || []
+          }));
+          initialPolygonsSnapshot.value = JSON.stringify(polygons.value);
+        }
+      } catch (e) {
+        console.warn('解析历史标注失败:', e);
+      }
+    }
+
+    // 监听来自父窗口的 postMessage
+    window.addEventListener('message', handleStandaloneMessage);
+
+    // 向父窗口发送 ANNOTATOR_READY 握手就绪信号
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({
+        type: 'ANNOTATOR_READY',
+        key: standaloneKey.value
+      }, '*');
+    }
+
+    // 若 URL 已提供外部图片地址，立即初始化沙箱图片
+    if (standaloneImageUrl.value) {
+      initStandaloneImage(standaloneKey.value, standaloneImageUrl.value);
+    }
+  } else {
+    await fetchDatasets();
+    await fetchClasses();
+    fetchTrainStatus();
+  }
 
   fetchSysInfo();
-  fetchTrainStatus();
   fetchModelsList(); // 页面初始化即刻加载可用模型列表
   fetchLoadedModels(); // 初始化常驻模型列表
   
@@ -4387,7 +4724,9 @@ onMounted(async () => {
   window.addEventListener('beforeunload', handleBeforeUnload);
   window.addEventListener('pagehide', handlePageHide);
   if (currentTab.value === 'label') {
-    fetchImageList();
+    if (!isStandaloneMode.value) {
+      fetchImageList();
+    }
     fetchWorldModelsList();
     fetchLoadedModels();
     window.addEventListener('keydown', handleKeyDown);
@@ -4402,6 +4741,7 @@ onUnmounted(() => {
   clearInterval(sysInfoInterval);
   closeLogStream();
   
+  window.removeEventListener('message', handleStandaloneMessage);
   window.removeEventListener('click', closePromptPopoverOnOutside);
   window.removeEventListener('click', closeModelPopoverOnOutside);
   window.removeEventListener('beforeunload', handleBeforeUnload);

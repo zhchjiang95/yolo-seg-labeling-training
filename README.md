@@ -318,7 +318,129 @@ xnl-training-platform/
   - **极速热加载标识**：模型选择下拉框中已常驻显存的模型会自动标注 `⚡已载入`，直观指引用户免读盘秒级推理；
 * **页面关闭即时释放与超时休眠兜底**：
   - 前端通过现代浏览器的 `navigator.sendBeacon` 与 `pagehide` 生命周期，在用户关闭标签页、关闭浏览器或离开页面时即时异步回收 GPU 显存与系统内存；
-  - 若用户保持页面打开但超过 300 秒（5 分钟）未触发任何推理操作，后台自动定时扫描协程（每 60 秒轮询）将触发深度休眠卸载，确保显存不会被长期无意义占驻。
+### 5. 共享独立标注微工作台（跨项目 / 第三方系统无缝集成）
+
+为了让各类外部业务系统（如质检后台、图片管理平台、数据清洗工作台等）在**无需搬迁数据、无需改造登录鉴权**的前提下复用本平台的标注能力与 SAM 智能算力，系统提供了基于 `window.open` 与原生 `postMessage` 的**独立无状态标注微模式（Standalone Annotator）**。
+
+#### 💡 核心特性
+* **零跨域（Zero CORS）与免鉴权困扰**：调用方前端在新窗口打开标注平台，双方通过浏览器内存级别的 `postMessage` 握手与传值，彻底绕过浏览器的同源策略限制，无需配置后端复杂跨域头。
+* **全量 AI 算力无缝复用**：外部图片会自动接入平台后端的 `_temp` 临时沙箱，包括 **SAM 点选分割**、**SAM Refine 边缘贴合**、**YOLO-World 提示词识别** 在内的所有 AI 能力 100% 完整可用，标注完成或退出即刻自动销毁清理，不污染本地正式数据集。
+* **双向握手与大数据量支持**：除基础 URL 传参外，支持双向 `postMessage` 握手，突破浏览器 URL 2KB~8KB 长度限制，几十个自定义类别或成百上千个历史多边形均可流畅秒级回显。
+
+---
+
+#### 📋 协议与接口规范
+
+##### 1. URL 启动参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `mode` | `string` | **是** | - | 固定传 `standalone`，进入无状态独立标注模式 |
+| `key` | `string` | **是** | - | 图片在调用方系统的唯一标识（如文件名、工单号、UUID） |
+| `image` | `string` | 否 | - | 待标注图片的网络可访问 URL（建议 `encodeURIComponent` 转义） |
+| `classes` | `string` | 否 | `目标` | 自定义分类标签，英文逗号分隔（如 `划痕,凹坑,脏污`）或 JSON 数组字符串 |
+| `annotations` | `string` | 否 | `[]` | 历史标注数据（JSON 数组），用于二次修改或审核回显 |
+| `autoClose` | `boolean`| 否 | `true` | 完成回传后是否自动执行 `window.close()` 关闭标签页 |
+
+##### 2. 消息回传格式 (`ANNOTATOR_SAVE`)
+
+用户在独立模式下点击【完成并回传】或按下快捷键 <kbd>Ctrl+S</kbd> 时，标注平台会向父窗口 (`window.opener`) 投递如下结构的消息：
+
+```json
+{
+  "type": "ANNOTATOR_SAVE",
+  "key": "defect_sample_001.jpg",
+  "timestamp": 1726488390123,
+  "is_negative": false,
+  "image": {
+    "name": "defect_sample_001_a1b2c3d4.jpg",
+    "width": 1920,
+    "height": 1080
+  },
+  "classes": ["划痕", "凹坑", "脏污"],
+  "polygons": [
+    {
+      "class_id": 0,
+      "class_name": "划痕",
+      "points": [
+        [0.125, 0.231],
+        [0.210, 0.245],
+        [0.198, 0.312]
+      ]
+    }
+  ]
+}
+```
+
+> **说明**：
+> 1. 多边形 `points` 数组中的坐标均为相对于原图宽高的 **归一化坐标（0.0 ~ 1.0）**，与 YOLO Segmentation 标准格式天然契合，无论图片在前端以何种缩放比展示，坐标精度均不受影响。
+> 2. `is_negative` 字段：当画面上没有任何标注多边形（如用户点击【清空】后直接点【完成并回传】）时，`is_negative` 自动为 `true`，代表这是一张纯背景/负样本图片，调用方可方便地在自身系统中将其打标为负样本。
+
+##### 3. 取消与退出消息 (`ANNOTATOR_CANCEL`)
+
+用户点击【取消】或按 <kbd>Esc</kbd> 放弃标注时，投递：
+```json
+{
+  "type": "ANNOTATOR_CANCEL",
+  "key": "defect_sample_001.jpg"
+}
+```
+
+---
+
+#### 🚀 第三方前端极简对接示例（开箱即用）
+
+在调用方系统的前端页面中，仅需编写如下十几行原生 JavaScript 代码：
+
+```html
+<!-- 第三方前端代码示例 -->
+<button id="openAnnotatorBtn">开始标注图片</button>
+
+<script>
+document.getElementById('openAnnotatorBtn').addEventListener('click', () => {
+  const currentKey = 'defect_sample_001.jpg';
+  const imgUrl = 'https://your-server.com/images/sample.jpg';
+  const classes = '划痕,凹坑,杂质';
+
+  // 1. 弹出标注微工作台窗口
+  const annotatorHost = 'http://192.168.1.100:9523'; // 替换为你的标注服务地址
+  const targetUrl = `${annotatorHost}/?mode=standalone&key=${encodeURIComponent(currentKey)}&image=${encodeURIComponent(imgUrl)}&classes=${encodeURIComponent(classes)}`;
+  
+  const popupWin = window.open(targetUrl, '_blank');
+
+  // 2. 监听标注回传事件
+  const handleMessage = (event) => {
+    // 安全建议：可在生产环境中校验 event.origin
+    const data = event.data;
+    if (!data || typeof data !== 'object') return;
+
+    // 收到标注完成结果
+    if (data.type === 'ANNOTATOR_SAVE' && data.key === currentKey) {
+      console.log('✅ 成功获取标注多边形数据：', data.polygons);
+      console.log('类别体系：', data.classes);
+
+      // 调用第三方自身已有的保存 API 存入自身业务数据库
+      saveToMyBackend({
+        imageKey: data.key,
+        polygons: data.polygons,
+        imageSize: data.image
+      });
+
+      // 移除当前监听器
+      window.removeEventListener('message', handleMessage);
+    }
+
+    // 收到用户放弃取消
+    if (data.type === 'ANNOTATOR_CANCEL' && data.key === currentKey) {
+      console.log('操作员取消了标注');
+      window.removeEventListener('message', handleMessage);
+    }
+  };
+
+  window.addEventListener('message', handleMessage);
+});
+</script>
+```
 
 ---
 

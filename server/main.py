@@ -292,7 +292,7 @@ def get_datasets():
     
     datasets = []
     for item in labeling_dir.iterdir():
-        if item.is_dir() and not item.name.startswith("."):
+        if item.is_dir() and not item.name.startswith((".", "_")):
             if (item / "images").exists() or item.name == "default":
                 datasets.append(item.name)
     
@@ -1118,6 +1118,100 @@ def delete_labeling_image(name: str, dataset: str = "default"):
         label_path.unlink()
         
     return {"status": "success", "message": f"图片 {name} 及其标签已被删除"}
+
+# 3.1 外部图片沙箱准备接口（用于共享/独立微标注工作台）
+class PrepareExternalImageRequest(BaseModel):
+    key: Optional[str] = Field(None, description="图片唯一标识键或文件名")
+    image_url: Optional[str] = Field(None, description="外部图片网络下载地址")
+    image_base64: Optional[str] = Field(None, description="外部图片Base64编码数据")
+
+def cleanup_temp_sandbox(max_age_seconds: int = 86400):
+    """
+    清理临时标注沙箱目录中超过指定时长的旧缓存文件（默认清理24小时之前的孤立图片）
+    """
+    try:
+        temp_dir = WORKSPACE_DIR / "datasets" / "labeling" / "_temp" / "images"
+        labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / "_temp" / "labels"
+        if not temp_dir.exists():
+            return
+        now = time.time()
+        for f in temp_dir.iterdir():
+            if f.is_file() and (now - f.stat().st_mtime) > max_age_seconds:
+                try:
+                    f.unlink(missing_ok=True)
+                    lbl = labels_dir / (f.stem + ".txt")
+                    lbl.unlink(missing_ok=True)
+                except Exception:
+                    pass
+    except Exception as err:
+        print(f"[Sandbox] 临时沙箱缓存清理异常: {err}")
+
+@app.post("/api/labeling/prepare_external")
+def prepare_external_image(req: PrepareExternalImageRequest):
+    """
+    共享/独立标注沙箱准备接口：
+    接收外部传入的 image_url 或 image_base64，安全暂存至 _temp 数据集目录中，
+    供前端全屏画布加载以及后端 SAM / YOLO-World 算力直接推理。
+    """
+    import re
+    import uuid
+    import base64
+    import urllib.request
+    import urllib.error
+
+    if not req.image_url and not req.image_base64:
+        raise HTTPException(status_code=400, detail="必须提供 image_url 或 image_base64")
+
+    # 执行一次过期缓存清理
+    cleanup_temp_sandbox()
+
+    temp_images_dir = WORKSPACE_DIR / "datasets" / "labeling" / "_temp" / "images"
+    temp_images_dir.mkdir(parents=True, exist_ok=True)
+    temp_labels_dir = WORKSPACE_DIR / "datasets" / "labeling" / "_temp" / "labels"
+    temp_labels_dir.mkdir(parents=True, exist_ok=True)
+
+    # 规范化文件名，保留合法扩展名并添加随机防冲突后缀
+    raw_key = req.key.strip() if req.key else "external"
+    clean_stem = re.sub(r'[^\w\.-]', '_', Path(raw_key).stem) or "external"
+    ext = Path(raw_key).suffix.lower()
+    if ext not in {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}:
+        ext = '.jpg'
+
+    short_token = uuid.uuid4().hex[:8]
+    safe_name = f"{clean_stem}_{short_token}{ext}"
+    target_path = temp_images_dir / safe_name
+
+    try:
+        if req.image_base64:
+            base64_str = req.image_base64
+            if "," in base64_str:
+                base64_str = base64_str.split(",", 1)[1]
+            content = base64.b64decode(base64_str)
+            with open(target_path, "wb") as f:
+                f.write(content)
+        elif req.image_url:
+            req_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            req_obj = urllib.request.Request(req.image_url, headers=req_headers)
+            with urllib.request.urlopen(req_obj, timeout=15) as resp:
+                content = resp.read()
+            with open(target_path, "wb") as f:
+                f.write(content)
+    except urllib.error.URLError as e:
+        raise HTTPException(status_code=400, detail=f"下载外部图片失败: {str(e.reason)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存外部图片异常: {str(e)}")
+
+    mtime = int(target_path.stat().st_mtime)
+    return {
+        "status": "success",
+        "name": safe_name,
+        "original_key": req.key or safe_name,
+        "dataset": "_temp",
+        "mtime": mtime,
+        "url": f"/labeling_images/_temp/images/{safe_name}"
+    }
 
 # 4. 获取已有标注和 classes 列表
 @app.get("/api/labeling/labels/{name}")
