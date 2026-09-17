@@ -442,6 +442,11 @@ document.getElementById('openAnnotatorBtn').addEventListener('click', () => {
 </script>
 ```
 
+> [!TIP]
+> **本地开发与隔离网络环境提示**：
+> - 若后端运行在 WSL 2 / Docker 容器 / 局域网 GPU 主机中，而后端无法直接访问客户端浏览器宿主机的 `localhost` 时，平台前端**已内置浏览器端直拉 Base64 自动双通道兜底**，客户端会自动在本地完成加载并推送后端沙箱，调用方无需任何繁琐配置；
+> - 对于有严格权限鉴权或尺寸极大的图片，调用方也可以在 `INIT_DATA` 中直接传入 `imageBase64`（支持 DataURL 或纯 Base64），完全绕过网络下载环节，秒级加载。
+
 ---
 
 ## 📄 开源许可证

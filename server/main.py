@@ -1190,16 +1190,66 @@ def prepare_external_image(req: PrepareExternalImageRequest):
             with open(target_path, "wb") as f:
                 f.write(content)
         elif req.image_url:
+            import urllib.parse
+            parsed_url = urllib.parse.urlparse(req.image_url)
+            
+            # 候选 URL 列表（支持 localhost 到 127.0.0.1 以及 WSL/容器宿主机 IP 的智能切换）
+            candidate_urls = [req.image_url]
+            if parsed_url.hostname in ("localhost", "127.0.0.1"):
+                if parsed_url.hostname == "localhost":
+                    alt_url = urllib.parse.urlunparse(parsed_url._replace(netloc=parsed_url.netloc.replace("localhost", "127.0.0.1", 1)))
+                    if alt_url not in candidate_urls:
+                        candidate_urls.append(alt_url)
+                
+                # 如果运行在 WSL / Linux 容器中，尝试解析宿主机网关 IP
+                resolv_conf = Path("/etc/resolv.conf")
+                if resolv_conf.exists():
+                    try:
+                        with open(resolv_conf, "r", encoding="utf-8") as rf:
+                            for line in rf:
+                                if line.strip().startswith("nameserver"):
+                                    host_ip = line.strip().split()[1]
+                                    alt_host_url = urllib.parse.urlunparse(parsed_url._replace(netloc=parsed_url.netloc.replace(parsed_url.hostname, host_ip, 1)))
+                                    if alt_host_url not in candidate_urls:
+                                        candidate_urls.append(alt_host_url)
+                                    break
+                    except Exception:
+                        pass
+
+            content = None
+            last_err = None
             req_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-            req_obj = urllib.request.Request(req.image_url, headers=req_headers)
-            with urllib.request.urlopen(req_obj, timeout=15) as resp:
-                content = resp.read()
+            # 默认使用直连 opener，避免受系统全局代理 (如 127.0.0.1:7890) 干扰导致连接被拒绝
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            for c_url in candidate_urls:
+                try:
+                    req_obj = urllib.request.Request(c_url, headers=req_headers)
+                    with opener.open(req_obj, timeout=8) as resp:
+                        content = resp.read()
+                    if content:
+                        break
+                except Exception as e:
+                    last_err = e
+                    continue
+
+            # 若无代理直连失败且存在系统代理，再用系统默认 opener 兜底尝试一次
+            if not content:
+                try:
+                    req_obj = urllib.request.Request(req.image_url, headers=req_headers)
+                    with urllib.request.urlopen(req_obj, timeout=8) as resp:
+                        content = resp.read()
+                except Exception as e:
+                    last_err = e
+
+            if not content:
+                raise HTTPException(status_code=400, detail=f"下载外部图片失败: {str(getattr(last_err, 'reason', last_err))}")
+
             with open(target_path, "wb") as f:
                 f.write(content)
-    except urllib.error.URLError as e:
-        raise HTTPException(status_code=400, detail=f"下载外部图片失败: {str(e.reason)}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存外部图片异常: {str(e)}")
 

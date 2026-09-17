@@ -1344,7 +1344,7 @@
         </div>
 
         <!-- 画布核心工作区 -->
-        <div class="canvas-workspace" :class="{ 'draw-mode': activeTool === 'draw', 'panning': activeTool === 'pan' || spacePressed || rightMouseDown }" @wheel.prevent="handleZoom" @mousedown="startPan" @contextmenu.prevent>
+        <div ref="canvasWorkspaceRef" class="canvas-workspace" :class="{ 'draw-mode': activeTool === 'draw', 'panning': activeTool === 'pan' || spacePressed || rightMouseDown }" @wheel.prevent="handleZoom" @mousedown="startPan" @contextmenu.prevent>
           <!-- 画布顶部居中融合控制 Bar (精简旋转控制 + 选中实例 SAM 优化控制) -->
           <transition name="popover-fade">
             <div v-if="currentImage" class="top-floating-control-bar" @mousedown.stop @click.stop>
@@ -1440,7 +1440,7 @@
           
           <!-- 图片与 SVG 渲染包裹器，绑定平移、缩放与视角旋转 -->
           <div v-else class="canvas-container" :style="{ transform: `translate(${panX}px, ${panY}px) scale(${zoom}) rotate(${rotationAngle}deg)` }">
-            <img :src="currentImageSrc" class="canvas-img" @load="onImageLoad" />
+            <img ref="canvasImgRef" :src="currentImageSrc" class="canvas-img" @load="onImageLoad" @error="onImageError" />
             
             <!-- SVG 多边形编辑渲染图层，像素级 viewBox 同步 -->
             <svg :viewBox="`0 0 ${imgNaturalWidth} ${imgNaturalHeight}`" class="svg-overlay" @mousedown="handleSVGMouseDown" @click="handleSVGClick">
@@ -2095,6 +2095,18 @@ const API_BASE = window.location.hostname === 'localhost' || window.location.hos
   ? 'http://localhost:9523'
   : window.location.origin;
 
+// URL 参数预判独立标注微模式（必须同步初始化，防止组件首次挂载时触发默认数据集竞争）
+const urlParams = new URLSearchParams(window.location.search);
+const isStandalone = urlParams.get('mode') === 'standalone';
+
+const isStandaloneMode = ref(isStandalone);
+const standaloneKey = ref(urlParams.get('key') || '');
+const standaloneImageUrl = ref(urlParams.get('image') || '');
+const standaloneAutoClose = ref(urlParams.get('autoClose') !== 'false');
+const standaloneLoading = ref(false);
+const showStandaloneCopyModal = ref(false);
+const standaloneResultJson = ref('');
+
 // 状态文字映射表
 const stateLabels = {
   idle: '等待训练',
@@ -2123,7 +2135,7 @@ const showToast = (message, type = 'info') => {
 // 1. 训练控制台状态与逻辑
 // ==========================================
 
-const currentTab = ref('train'); // train | label
+const currentTab = ref(isStandalone ? 'label' : 'train'); // train | label
 const isDark = ref(false); // 默认暗色模式
 
 const form = reactive({
@@ -2530,10 +2542,45 @@ const lastSavedImage = ref(null); // 记录最近一次保存的标注/负样本
 const initialPolygonsSnapshot = ref('[]'); // 加载图片或保存成功时的多边形快照 JSON 字符串
 const rotationAngle = ref(0); // 画布视角旋转角度（0, 90, 180, 270...）
 
+// 画布工作区尺寸监听器与自适应视野重置
+let workspaceResizeObserver = null;
+const setupWorkspaceResizeObserver = () => {
+  if (typeof window === 'undefined' || !window.ResizeObserver) return;
+  const workspace = canvasWorkspaceRef.value || document.querySelector('.canvas-workspace');
+  if (!workspace) return;
+  if (workspaceResizeObserver) {
+    workspaceResizeObserver.disconnect();
+  }
+  workspaceResizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.contentRect && entry.contentRect.width > 50 && entry.contentRect.height > 50) {
+        if (currentImage.value && imgNaturalWidth.value && imgNaturalHeight.value) {
+          resetCanvasViewport();
+        }
+      }
+    }
+  });
+  workspaceResizeObserver.observe(workspace);
+};
+
 // 重置/居中画布视野，自适应当前旋转角度 (基准 transform-origin: 0 0)
-const resetCanvasViewport = () => {
-  const workspace = document.querySelector('.canvas-workspace');
-  if (!workspace || !imgNaturalWidth.value || !imgNaturalHeight.value) return;
+const resetCanvasViewport = (retry = 0) => {
+  const workspace = canvasWorkspaceRef.value || document.querySelector('.canvas-workspace');
+  if (!workspace || !imgNaturalWidth.value || !imgNaturalHeight.value) {
+    if (retry < 15) {
+      setTimeout(() => resetCanvasViewport(retry + 1), 60);
+    }
+    return;
+  }
+
+  // 若容器尚未完成首次排版渲染 (clientWidth 或 clientHeight 极小)，延后重试避免算错缩放居中
+  if (workspace.clientWidth < 50 || workspace.clientHeight < 50) {
+    if (retry < 15) {
+      setTimeout(() => resetCanvasViewport(retry + 1), 60);
+    }
+    // 关键修正：若重试超限容器仍无尺寸（如窗口处于后台非激活状态），直接 return，禁止用 0 尺寸算负坐标将图片移出视口
+    return;
+  }
 
   const pad = 32; // 安全边距
   const containerW = Math.max(100, workspace.clientWidth - pad);
@@ -2739,6 +2786,10 @@ const closeModelPopoverOnOutside = (e) => {
   }
 };
 
+// 画布 DOM 引用
+const canvasWorkspaceRef = ref(null);
+const canvasImgRef = ref(null);
+
 // 拖拽与缩水平移状态
 const zoom = ref(1.0);
 const panX = ref(0);
@@ -2860,7 +2911,7 @@ const getPolyColor = (classId) => {
 
 // 数据集管理状态
 const datasets = ref([]);
-const currentDataset = ref('default');
+const currentDataset = ref(isStandalone ? '_temp' : 'default');
 
 const fetchDatasets = async () => {
   try {
@@ -2979,6 +3030,7 @@ const fetchClasses = async () => {
 
 // 监听当前数据集变化，重置分类选中并重载相关列表
 watch(currentDataset, async () => {
+  if (isStandaloneMode.value) return; // 独立标注微模式下不响应数据集切换与重置
   activeClassIndex.value = 0; // 切换数据集时默认选中第一个分类标签
   lastSavedImage.value = null; // 清空上一数据集的刚保存记录
   await fetchImageList();
@@ -3117,9 +3169,32 @@ const selectImage = async (img, force = false) => {
 
 // 图像加载完成获取实际分辨率，并重置画布视角进行居中自适应
 const onImageLoad = (e) => {
-  imgNaturalWidth.value = e.target.naturalWidth || 800;
-  imgNaturalHeight.value = e.target.naturalHeight || 600;
-  resetCanvasViewport();
+  const target = e?.target || canvasImgRef.value;
+  if (target) {
+    if (target.naturalWidth) imgNaturalWidth.value = target.naturalWidth;
+    if (target.naturalHeight) imgNaturalHeight.value = target.naturalHeight;
+  }
+  nextTick(() => {
+    resetCanvasViewport();
+  });
+};
+
+// 监听当前活跃图片变化，确保 DOM 容器监听和首帧自适应居中生效
+watch(currentImage, (newImg) => {
+  if (newImg) {
+    nextTick(() => {
+      setupWorkspaceResizeObserver();
+      // 容错：若图片资源已处于 complete 状态(如浏览器高速缓存)，主动触发尺寸探测与居中重置
+      if (canvasImgRef.value && canvasImgRef.value.complete && canvasImgRef.value.naturalWidth > 0) {
+        onImageLoad({ target: canvasImgRef.value });
+      }
+    });
+  }
+});
+
+const onImageError = (e) => {
+  console.error('图片资源加载失败:', currentImageSrc.value);
+  showToast('图片加载失败，请检查网络连接或图片资源', 'error');
 };
 
 
@@ -4096,28 +4171,109 @@ const getNextImage = () => {
 // ==========================================
 // 独立/共享标注微模式 (Standalone Annotator) 核心逻辑
 // ==========================================
-const isStandaloneMode = ref(false);
-const standaloneKey = ref('');
-const standaloneImageUrl = ref('');
-const standaloneAutoClose = ref(true);
-const standaloneLoading = ref(false);
-const showStandaloneCopyModal = ref(false);
-const standaloneResultJson = ref('');
+
+// 浏览器客户端直接拉取外部图片并转为 Base64（解决后端处于容器/WSL等隔离网络无法访问客户端本地服务的问题）
+const fetchImageAsBase64 = async (url) => {
+  // 1. 优先使用 fetch 获取 Blob（适用于同源或允许 CORS 的外部地址）
+  try {
+    const res = await fetch(url);
+    if (res.ok) {
+      const blob = await res.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+  } catch (e) {
+    console.warn('浏览器直接 fetch 获取图片失败，尝试使用 Image 节点转换:', e);
+  }
+
+  // 2. 尝试 Image + Canvas 绘制转换
+  return await new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || 800;
+        canvas.height = img.naturalHeight || 600;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/jpeg', 0.95));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = (err) => reject(new Error('浏览器端加载图片资源失败'));
+    img.src = url;
+  });
+};
+
+const isLocalHostAddress = (url) => {
+  if (!url) return false;
+  try {
+    const u = new URL(url, window.location.href);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '0.0.0.0';
+  } catch {
+    return false;
+  }
+};
 
 // 初始化独立标注图片至后端沙箱
+let currentLoadingKey = '';
 const initStandaloneImage = async (key, imageUrl, imageBase64) => {
   if (!imageUrl && !imageBase64) return;
+  // 防并发重入：若相同 key 正处于拉取中，避免重复请求
+  if (standaloneLoading.value && currentLoadingKey === key && key) {
+    return;
+  }
+  currentLoadingKey = key || '';
   standaloneLoading.value = true;
   try {
-    const res = await fetch(`${API_BASE}/api/labeling/prepare_external`, {
+    let finalBase64 = imageBase64;
+
+    // 智能优化：若传入的是客户端本地服务图片 (localhost / 127.0.0.1)，
+    // 后端若运行在 WSL/Docker/云端虚拟机中将无法访问客户端宿主机的 localhost，
+    // 因此前端优先在浏览器环境中直接拉取为 Base64，彻底杜绝 Connection refused
+    if (!finalBase64 && imageUrl && isLocalHostAddress(imageUrl)) {
+      try {
+        finalBase64 = await fetchImageAsBase64(imageUrl);
+      } catch (err) {
+        console.warn('本地图片浏览器预拉取未成功，降级交由后端尝试直连:', err);
+      }
+    }
+
+    let res = await fetch(`${API_BASE}/api/labeling/prepare_external`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         key: key || 'external_img',
-        image_url: imageUrl || undefined,
-        image_base64: imageBase64 || undefined
+        image_url: finalBase64 ? undefined : (imageUrl || undefined),
+        image_base64: finalBase64 || undefined
       })
     });
+
+    // 自动双通道兜底：若后端直连下载失败，前端自动在浏览器端抓取 Base64 并重试提交后端
+    if (!res.ok && !finalBase64 && imageUrl) {
+      console.warn('后端直连下载外部图片失败，启用前端浏览器端拉取兜底通道...');
+      try {
+        const clientBase64 = await fetchImageAsBase64(imageUrl);
+        if (clientBase64) {
+          res = await fetch(`${API_BASE}/api/labeling/prepare_external`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              key: key || 'external_img',
+              image_base64: clientBase64
+            })
+          });
+        }
+      } catch (fallbackErr) {
+        console.error('前端浏览器端拉取图片兜底同样失败:', fallbackErr);
+      }
+    }
     
     if (res.ok) {
       const data = await res.json();
@@ -4129,6 +4285,21 @@ const initStandaloneImage = async (key, imageUrl, imageBase64) => {
         label_count: polygons.value.length
       };
       initialPolygonsSnapshot.value = JSON.stringify(polygons.value || []);
+      
+      // 双重保险：预加载图像探测真实像素尺寸并强制刷新画布居中自适应
+      const img = new Image();
+      img.onload = () => {
+        if (img.naturalWidth) imgNaturalWidth.value = img.naturalWidth;
+        if (img.naturalHeight) imgNaturalHeight.value = img.naturalHeight;
+        nextTick(() => {
+          resetCanvasViewport();
+        });
+      };
+      img.onerror = () => {
+        console.warn('预加载图片探针异常，等待画布真实 img 节点加载:', img.src);
+      };
+      img.src = `${API_BASE}/labeling_images/_temp/images/${data.name}?t=${data.mtime}`;
+
       showToast('图片载入就绪，可开始标注', 'success');
     } else {
       const err = await res.json();
@@ -4590,6 +4761,23 @@ const handleWindowBlur = () => {
 
 // 切换 TAB 时刷新数据
 watch(currentTab, (newTab) => {
+  if (isStandaloneMode.value) {
+    // 独立微模式下：仅拉取 AI 模型列表并绑定快捷键，绝不调用 fetchImageList / fetchClasses 冲掉沙箱数据
+    if (newTab === 'label') {
+      fetchModelsList();
+      fetchWorldModelsList();
+      fetchLoadedModels();
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
+      window.addEventListener('mousemove', handleMouseMoveGlobal);
+      window.addEventListener('blur', handleWindowBlur);
+      nextTick(() => {
+        setupWorkspaceResizeObserver();
+      });
+    }
+    return;
+  }
+
   if (newTab === 'label') {
     fetchImageList();
     fetchClasses();
@@ -4600,6 +4788,9 @@ watch(currentTab, (newTab) => {
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMoveGlobal);
     window.addEventListener('blur', handleWindowBlur);
+    nextTick(() => {
+      setupWorkspaceResizeObserver();
+    });
   } else {
     // 切换到训练页时加载系统信息并刷新可用模型列表（呈现最新训练产物）
     fetchSysInfo();
@@ -4648,12 +4839,7 @@ onMounted(async () => {
   updateThemeClass();
 
   // 检查是否为独立标注微模式
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('mode') === 'standalone') {
-    isStandaloneMode.value = true;
-    currentTab.value = 'label';
-    currentDataset.value = '_temp';
-    
+  if (isStandaloneMode.value) {
     standaloneKey.value = urlParams.get('key') || 'external_image';
     standaloneImageUrl.value = urlParams.get('image') || '';
     if (urlParams.get('autoClose') === 'false') {
@@ -4734,6 +4920,11 @@ onMounted(async () => {
     window.addEventListener('mousemove', handleMouseMoveGlobal);
     window.addEventListener('blur', handleWindowBlur);
   }
+
+  // 初始化画布容器尺寸响应监听
+  nextTick(() => {
+    setupWorkspaceResizeObserver();
+  });
 });
 
 onUnmounted(() => {
@@ -4751,6 +4942,11 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', handleMouseMoveGlobal);
   window.removeEventListener('blur', handleWindowBlur);
   
+  if (workspaceResizeObserver) {
+    workspaceResizeObserver.disconnect();
+    workspaceResizeObserver = null;
+  }
+
   // 组件卸载时释放模型
   unloadModelsOnPageExit();
 });
