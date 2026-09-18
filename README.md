@@ -97,6 +97,10 @@ cd server
     - **全维度元数据持久化**：数据集准备阶段自动深度解析标注文件，将训练超参数（epochs, batch, lr0, patience, imgsz, device）、增量固化划分模式、数据增强策略（Mosaic, MixUp, CopyPaste, 水平/垂直翻转, 旋转角度）与数据集画像持久化保存至 `train_meta.json`。
     - **数据集画像与子集分布可视化**：精确汇总图片总量、已标注正样本、纯背景负样本、标注实例多边形总数；提供彩色堆叠比例条展示 Train / Val / Test 划分百分比与张数，并呈现细化到各个类别的实例分布明细。
     - **训练中与训练后自适应呈现**：在右侧控制台区域自适应展示当前训练中或最近一次已完成训练的策略画像，支持一键平滑折叠/展开，高信息密度与视觉清爽兼顾。
+11. **✨ 第三方开放推理 API (模型分割与 Prompt 识别)**：
+    - **轻量独立开放接口**：提供 `/api/v1/inference` 开放路由，支持第三方系统（如猪场边缘设备、估重系统、企业 ERP/MES）传入图片直接获取猪只轮廓点、外接包围盒、像素投影面积与几何质心。
+    - **双调用模式**：全面支持 `multipart/form-data`（图片文件直传）与 `application/json`（Base64 编码）两种主流调用协议。
+    - **详尽文档与在线调试**：提供独立的接口对接文档 [`docs/EXTERNAL_API.md`](docs/EXTERNAL_API.md)，前端顶栏右上角常驻文档窗口，并支持直接跳转 Swagger 交互式在线测试。
 
 
 ---
@@ -446,6 +450,42 @@ document.getElementById('openAnnotatorBtn').addEventListener('click', () => {
 > **本地开发与隔离网络环境提示**：
 > - 若后端运行在 WSL 2 / Docker 容器 / 局域网 GPU 主机中，而后端无法直接访问客户端浏览器宿主机的 `localhost` 时，平台前端**已内置浏览器端直拉 Base64 自动双通道兜底**，客户端会自动在本地完成加载并推送后端沙箱，调用方无需任何繁琐配置；
 > - 对于有严格权限鉴权或尺寸极大的图片，调用方也可以在 `INIT_DATA` 中直接传入 `imageBase64`（支持 DataURL 或纯 Base64），完全绕过网络下载环节，秒级加载。
+
+---
+
+## 🔌 第三方系统调用模型推理 API（获取猪只轮廓点）
+
+平台提供了一组独立的外部开放推理 API，位于 `/api/v1/inference`。其他第三方业务系统（如猪只估重系统、智能盘点系统、视频分析服务）无需依赖任何前端页面，直接调用 HTTP 接口传入图片，即可毫秒级获取**猪只的绝对像素轮廓点、归一化多边形点、包围盒、像素投影面积及质心坐标**。
+
+### 核心开放接口速览
+
+| 接口说明 | 请求方法与路径 | 传参方式 | 核心输出 |
+| :--- | :--- | :--- | :--- |
+| **YOLO 分割识别** | `POST /api/v1/inference/segment` | `multipart/form-data`（上传图片文件） | 猪只多边形轮廓点、BBox、像素投影面积、质心 |
+| **YOLO 分割识别 (Base64)** | `POST /api/v1/inference/segment/json` | `application/json`（图片 Base64 编码） | 同上 |
+| **Prompt 开放识别** | `POST /api/v1/inference/prompt` | `multipart/form-data`（输入 prompt="pig"） | 开放词汇零样本定位与精细轮廓 |
+| **Prompt 开放识别 (Base64)**| `POST /api/v1/inference/prompt/json` | `application/json`（Base64 + prompt） | 同上 |
+| **可用模型查询** | `GET /api/v1/inference/models` | 无 | 系统当前可用的分割模型与世界模型列表 |
+
+### 快速调用示例 (Python)
+```python
+import requests
+
+# 传入本地图片，直接获取猪只分割轮廓点
+url = "http://127.0.0.1:9523/api/v1/inference/segment"
+with open("pig.jpg", "rb") as f:
+    res = requests.post(url, files={"file": f}, data={"conf": 0.25}).json()
+
+if res["code"] == 200:
+    for target in res["data"]["predictions"]:
+        print(f"置信度: {target['confidence']}")
+        print(f"轮廓点数: {target['polygon']['point_count']}")
+        print(f"绝对像素坐标点: {target['polygon']['points']}")
+        print(f"投影像素面积: {target['polygon']['area_pixels']} px")
+```
+
+完整的参数定义、多语言调用代码（Python / cURL / JavaScript / Java）与猪只估重结合算法说明，请参阅专门编写的详细文档：
+👉 **[第三方开放接口对接文档 (docs/EXTERNAL_API.md)](docs/EXTERNAL_API.md)**
 
 ---
 

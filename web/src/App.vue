@@ -54,6 +54,14 @@
       </div>
 
       <div class="standalone-header-right">
+        <!-- 独立模式接口文档入口 -->
+        <button class="api-docs-nav-btn" style="padding: 6px 10px;" @click="showApiDocsModal = true" title="查看第三方系统对接接口文档">
+          <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M4 17l6-6-6-6M12 19h8"/>
+          </svg>
+          <span>接口文档</span>
+        </button>
+
         <button class="theme-toggle-btn" @click="toggleTheme" title="切换主题">
           <svg v-if="!isDark" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
@@ -95,12 +103,20 @@
       </div>
       
       <!-- 头部右侧动作组：状态徽章、Tab 与 主题 -->
-      <div style="display: flex; align-items: center; gap: 16px;">
+      <div style="display: flex; align-items: center; gap: 14px;">
         <div v-if="currentTab === 'train'" class="status-badge" :class="trainStatus.state">
           <span class="dot" :class="{ active: trainStatus.state === 'training' || trainStatus.state === 'preparing' }"></span>
           {{ stateLabels[trainStatus.state] || '未知状态' }}
         </div>
         
+        <!-- 第三方开放接口文档入口按钮 -->
+        <button class="api-docs-nav-btn" @click="showApiDocsModal = true" title="查看第三方开放推理接口对接文档与代码示例">
+          <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M4 17l6-6-6-6M12 19h8"/>
+          </svg>
+          <span>接口文档</span>
+        </button>
+
         <button class="theme-toggle-btn" @click="toggleTheme" title="切换主题">
           <!-- 亮色下显示月亮 -->
           <svg v-if="!isDark" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2084,11 +2100,18 @@
         </div>
       </div>
     </Transition>
+
+    <!-- 第三方开放推理接口文档弹窗 -->
+    <ApiDocsModal v-model="showApiDocsModal" />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
+import ApiDocsModal from './components/ApiDocsModal.vue';
+
+// 接口文档弹窗显隐状态
+const showApiDocsModal = ref(false);
 
 // 动态检测后端接口，开发环境指向 9523，生产环境同源
 const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'

@@ -942,6 +942,11 @@ class LabelingPredictor:
 
 predictor = LabelingPredictor(WORKSPACE_DIR)
 
+# 注册第三方开放推理接口 (External Inference API)
+from api_external import router as external_router, init_external_api
+init_external_api(predictor, WORKSPACE_DIR)
+app.include_router(external_router)
+
 # 后台定时任务：每 60 秒检查一次，卸载超过空闲超时的模型
 _model_cleanup_task = None
 
