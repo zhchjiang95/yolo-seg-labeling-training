@@ -71,7 +71,9 @@
               </div>
 
               <div class="api-desc-box">
-                <strong>接口说明：</strong>无需提前将图片存入平台图库，第三方直接传入图片，调用训练产生的最佳权重（<code>best.pt</code>）或预置 <code>yolo26s-seg.pt</code> 分割模型，毫秒级快速分割识别目标轮廓。
+                <strong>接口说明：</strong>无需提前将图片存入平台图库，第三方直接传入图片，与当前 Web 标注页面上的模型识别完全一致，支持两种形式：
+                <br>• <strong>单分割模型推理 (use_sam=false，默认)</strong>：调用选定或最佳模型（<code>best.pt</code>），极速生成闭合多边形；
+                <br>• <strong>识别并 SAM 优化 (use_sam=true)</strong>：等同于页面上的【✨ 识别并优化】按钮，模型定位后由 SAM 模型进行边缘重分割，轮廓极致贴合。
               </div>
 
               <!-- 参数表 -->
@@ -88,11 +90,11 @@
                 </thead>
                 <tbody>
                   <tr>
-                    <td><code>file</code> / <code>image_base64</code></td>
+                    <td><code>file</code> / <code>image_url</code> / <code>image_base64</code></td>
                     <td>File / String</td>
                     <td><span class="required-badge">是</span></td>
                     <td>-</td>
-                    <td>图片文件（JPG/PNG/BMP/WebP）或 Base64 编码字符串</td>
+                    <td>图片输入（<strong>三选一</strong>）：上传图片文件 (file)、直接传图片网络地址 (image_url) 或 Base64 字符串 (image_base64)</td>
                   </tr>
                   <tr>
                     <td><code>conf</code></td>
@@ -106,7 +108,14 @@
                     <td>String</td>
                     <td>否</td>
                     <td><code>null</code></td>
-                    <td>自定义模型权重相对路径（留空则自动选用系统最佳训练权重）</td>
+                    <td>模型权重地址，可由下方查询接口获取。<strong>留空则默认使用系统最佳模型 (如 best.pt)</strong></td>
+                  </tr>
+                  <tr>
+                    <td><code>use_sam</code></td>
+                    <td>Boolean</td>
+                    <td>否</td>
+                    <td><code>false</code></td>
+                    <td><strong>是否在识别后使用 SAM 进行高保真边缘优化</strong>：<br>• <code>false</code>：全图单模型识别（速度最快）<br>• <code>true</code>：识别后使用 SAM 精细重分割（等同于页面【识别并优化】）</td>
                   </tr>
                   <tr>
                     <td><code>simplify_tolerance</code></td>
@@ -120,7 +129,7 @@
 
               <!-- 代码示例 -->
               <div class="code-header-bar">
-                <span class="code-title">Python 接入示例 (文件直传与 Base64)</span>
+                <span class="code-title">Python 接入示例 (图片URL / 本地直传 / 识别并优化)</span>
                 <button class="copy-code-btn" @click="copyText(codeExamples.pythonSegment)">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 13px; height: 13px;">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -148,7 +157,7 @@
               </div>
 
               <div class="api-desc-box">
-                <strong>接口说明：</strong>输入任意自然语言提示词（如 <code>"pig"</code>、<code>"pig body, pig ear"</code>），借助 YOLO-World 开放词汇模型或 SAM 3 大模型进行零样本目标定位与高保真多边形轮廓提取。
+                <strong>接口说明：</strong>输入任意自然语言提示词（如 <code>"pig"</code>、<code>"pig body, pig ear"</code>），<strong>固定使用世界模型 <code>sam3.1_multiplex.pt</code></strong> 进行零样本语义直推与高保真多边形轮廓提取。无需指定模型，系统自动检索锁定 sam3.1 权重。
               </div>
 
               <!-- 参数表 -->
@@ -165,18 +174,18 @@
                 </thead>
                 <tbody>
                   <tr>
-                    <td><code>file</code> / <code>image_base64</code></td>
+                    <td><code>file</code> / <code>image_url</code> / <code>image_base64</code></td>
                     <td>File / String</td>
                     <td><span class="required-badge">是</span></td>
                     <td>-</td>
-                    <td>输入图片</td>
+                    <td>输入图片（支持文件上传、图片 URL 地址或 Base64 编码）</td>
                   </tr>
                   <tr>
                     <td><code>prompt</code></td>
                     <td>String</td>
                     <td>否</td>
                     <td><code>"pig"</code></td>
-                    <td>文本提示词，支持多个类别用逗号隔开</td>
+                    <td>文本提示词，支持多个类别用中英文逗号隔开</td>
                   </tr>
                   <tr>
                     <td><code>conf</code></td>
@@ -186,11 +195,11 @@
                     <td>置信度阈值</td>
                   </tr>
                   <tr>
-                    <td><code>use_sam</code></td>
-                    <td>Boolean</td>
+                    <td><code>simplify_tolerance</code></td>
+                    <td>Float</td>
                     <td>否</td>
-                    <td><code>true</code></td>
-                    <td>是否开启 SAM 提取精细多边形轮廓，为 false 时输出矩形多边形</td>
+                    <td><code>0.003</code></td>
+                    <td>轮廓简化容差</td>
                   </tr>
                 </tbody>
               </table>
@@ -212,7 +221,7 @@
                 <button class="copy-small-btn" @click="copyText('/api/v1/inference/models')">复制路径</button>
               </div>
               <div class="api-desc-box">
-                <strong>接口说明：</strong>查询当前服务端已就绪的所有分割模型权重（runs 产物与 models/segment）及世界模型权重，返回路径可直接用于上述接口的 <code>model_path</code> 参数。
+                <strong>接口说明：</strong>查询当前服务端可用的分割模型列表。<strong>获取的列表与 Web 页面上【模型识别】下拉框列表完全一致</strong>，列表第 1 项即为系统默认使用的最佳权重。
               </div>
 
               <div class="code-header-bar">
@@ -311,44 +320,65 @@ const copyText = (text) => {
 
 // 代码示例字典
 const codeExamples = {
-  pythonSegment: `# 1. 文件直接上传调用
+  pythonSegment: `# 方式 1: 单分割模型全图极速识别 (默认使用最佳模型)
+# 方式 1: 直接传入图片网络 URL 地址 (推荐，无需预下载)
 import requests
 
-url = "http://<server-ip>:9523/api/v1/inference/segment"
+url = "http://<server-ip>:9523/api/v1/inference/segment/json"
+payload = {
+    "image_url": "https://example.com/sample_pig.jpg",
+    "conf": 0.25,
+    "use_sam": False  # true 则开启 SAM 边缘优化
+}
+res = requests.post(url, json=payload).json()
+print("识别耗时:", res["data"]["latency_ms"], "ms, 目标数:", res["data"]["count"])
+
+# 方式 2: 本地图片文件直接上传 (支持 use_sam 优化)
 with open("pig.jpg", "rb") as f:
     files = {"file": ("pig.jpg", f, "image/jpeg")}
-    data = {"conf": 0.25, "simplify_tolerance": 0.003}
-    res = requests.post(url, files=files, data=data).json()
+    data = {"conf": 0.25, "use_sam": "true"}  # 开启 SAM 优化
+    res_refined = requests.post("http://<server-ip>:9523/api/v1/inference/segment", files=files, data=data).json()
 
-if res["code"] == 200:
-    for target in res["data"]["predictions"]:
-        print(f"目标类别: {target['class_name']}, 置信度: {target['confidence']}")
-        print(f"轮廓点数: {target['polygon']['point_count']}")
-        print(f"绝对坐标: {target['polygon']['points']}")
-        print(f"像素投影面积: {target['polygon']['area_pixels']} px^2")
+for target in res_refined["data"]["predictions"]:
+    print(f"类别: {target['class_name']}, 置信度: {target['confidence']}")
+    print(f"绝对坐标点数: {target['polygon']['point_count']}")
+    print(f"投影面积: {target['polygon']['area_pixels']} px^2")
 
-# 2. Base64 编码方式调用
+# 方式 3: Base64 编码方式调用
 import base64
 with open("pig.jpg", "rb") as f:
     b64 = base64.b64encode(f.read()).decode("utf-8")
-
 payload = {"image_base64": b64, "conf": 0.25}
 res_json = requests.post("http://<server-ip>:9523/api/v1/inference/segment/json", json=payload).json()`,
 
-  curlPrompt: `# 上传图片并输入 Prompt 识别猪只轮廓
+  curlPrompt: `# 1. 单分割模型全图识别 (默认最佳权重)
+curl -X POST "http://<server-ip>:9523/api/v1/inference/segment" \\
+     -F "file=@/path/to/pig.jpg" \\
+     -F "use_sam=false"
+
+# 2. 识别并使用 SAM 高保真边缘优化
+curl -X POST "http://<server-ip>:9523/api/v1/inference/segment" \\
+     -F "file=@/path/to/pig.jpg" \\
+     -F "use_sam=true"
+
+# 3. Prompt 开放词汇识别 (固定使用世界模型 sam3.1_multiplex.pt)
 curl -X POST "http://<server-ip>:9523/api/v1/inference/prompt" \\
      -F "file=@/path/to/pig.jpg" \\
-     -F "prompt=pig" \\
-     -F "conf=0.25" \\
-     -F "use_sam=true"`,
+     -F "prompt=pig"`,
 
   jsonModels: `{
   "code": 200,
   "message": "success",
   "data": {
-    "segment_models": [
+    "default_best_model": {
+      "name": "best.pt (最佳权重)",
+      "path": "runs/segment/yolo26s_train/weights/best.pt",
+      "type": "trained",
+      "is_best": true
+    },
+    "models": [
       {
-        "name": "best.pt (最佳训练权重)",
+        "name": "best.pt (最佳权重)",
         "path": "runs/segment/yolo26s_train/weights/best.pt",
         "type": "trained",
         "is_best": true
@@ -356,17 +386,11 @@ curl -X POST "http://<server-ip>:9523/api/v1/inference/prompt" \\
       {
         "name": "yolo26s-seg.pt",
         "path": "models/segment/yolo26s-seg.pt",
-        "type": "pretrained",
-        "is_default": true
+        "type": "default",
+        "is_best": false
       }
     ],
-    "world_models": [
-      {
-        "name": "yolov8l-worldv2.pt",
-        "path": "models/world/yolov8l-worldv2.pt",
-        "type": "world_model"
-      }
-    ]
+    "sam31_world_model": "models/world/sam3.1_multiplex.pt"
   }
 }`,
 
@@ -375,6 +399,8 @@ curl -X POST "http://<server-ip>:9523/api/v1/inference/prompt" \\
   "message": "success",
   "data": {
     "image_info": { "width": 1280, "height": 720, "channels": 3 },
+    "model_used": "runs/segment/yolo26s_train/weights/best.pt",
+    "mode": "segment_with_sam",
     "count": 1,
     "predictions": [
       {
@@ -395,7 +421,7 @@ curl -X POST "http://<server-ip>:9523/api/v1/inference/prompt" \\
         }
       }
     ],
-    "latency_ms": 35.8
+    "latency_ms": 115.8
   }
 }`
 };

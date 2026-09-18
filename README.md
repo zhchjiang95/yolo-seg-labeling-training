@@ -322,14 +322,17 @@ xnl-training-platform/
   - **极速热加载标识**：模型选择下拉框中已常驻显存的模型会自动标注 `⚡已载入`，直观指引用户免读盘秒级推理；
 * **页面关闭即时释放与超时休眠兜底**：
   - 前端通过现代浏览器的 `navigator.sendBeacon` 与 `pagehide` 生命周期，在用户关闭标签页、关闭浏览器或离开页面时即时异步回收 GPU 显存与系统内存；
-### 5. 共享独立标注微工作台（跨项目 / 第三方系统无缝集成）
+### 5. 共享独立标注微工作台（iframe 嵌入 / 弹窗跨项目无缝集成）
 
-为了让各类外部业务系统（如质检后台、图片管理平台、数据清洗工作台等）在**无需搬迁数据、无需改造登录鉴权**的前提下复用本平台的标注能力与 SAM 智能算力，系统提供了基于 `window.open` 与原生 `postMessage` 的**独立无状态标注微模式（Standalone Annotator）**。
+为了让各类外部业务系统（如质检后台、ERP、智能分析平台、数据清洗工作台等）在**无需搬迁数据、无需改造登录鉴权**的前提下复用本平台的标注能力与 SAM 智能算力，系统提供了**独立无状态标注微模式（Standalone Annotator）**，现已全面支持 **`iframe` 组件嵌入** 与 **`window.open` 弹出窗口** 两种集成方式。
+
+并在 Web 控制台右上角常驻提供 **【嵌入标注】** 使用指南窗口，可一键复制代码和在线体验。
 
 #### 💡 核心特性
-* **零跨域（Zero CORS）与免鉴权困扰**：调用方前端在新窗口打开标注平台，双方通过浏览器内存级别的 `postMessage` 握手与传值，彻底绕过浏览器的同源策略限制，无需配置后端复杂跨域头。
-* **全量 AI 算力无缝复用**：外部图片会自动接入平台后端的 `_temp` 临时沙箱，包括 **SAM 点选分割**、**SAM Refine 边缘贴合**、**YOLO-World 提示词识别** 在内的所有 AI 能力 100% 完整可用，标注完成或退出即刻自动销毁清理，不污染本地正式数据集。
-* **双向握手与大数据量支持**：除基础 URL 传参外，支持双向 `postMessage` 握手，突破浏览器 URL 2KB~8KB 长度限制，几十个自定义类别或成百上千个历史多边形均可流畅秒级回显。
+* **支持 `iframe` 内嵌与 `window.open` 双模式**：既可作为子组件直接嵌入到第三方系统的业务面板、抽屉或弹窗中，也支持新开浏览器标签页全屏专注打标。通信引擎自动识别父窗口上下文（`window.parent` / `window.opener`），无缝实现双向事件握手与数据回传。
+* **零跨域（Zero CORS）与免鉴权困扰**：调用方前端无论通过 iframe 还是弹窗嵌入，双方均通过浏览器内存级别的 `postMessage` 通信，彻底绕过浏览器的同源策略限制，无需配置后端复杂跨域头或反向代理。
+* **全量 AI 算力无缝复用**：外部图片会自动接入平台后端的 `_temp` 临时沙箱，包括 **SAM 点选分割**、**SAM Refine 边缘贴合**、**YOLO 自动检测** 在内的所有 AI 能力 100% 完整可用，标注完成或退出即刻自动销毁清理，不污染本地正式数据集。
+* **双向握手与大数据量支持**：除基础 URL 传参外，支持双向 `postMessage` 握手（监听 `ANNOTATOR_READY` 信号），突破浏览器 URL 长度限制，超大 Base64 图片或上千个历史多边形均可流畅秒级双向同步。
 
 ---
 
@@ -394,10 +397,37 @@ xnl-training-platform/
 
 #### 🚀 第三方前端极简对接示例（开箱即用）
 
-在调用方系统的前端页面中，仅需编写如下十几行原生 JavaScript 代码：
-
+##### 方式一：`iframe` 子组件嵌入方式 (推荐，嵌入自身业务系统)
 ```html
-<!-- 第三方前端代码示例 -->
+<div style="width: 100%; height: 750px; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+  <iframe
+    id="annotatorIframe"
+    src="http://192.168.1.100:9523/?mode=standalone&key=pig_001.jpg&image=https://example.com/pig.jpg&classes=猪只,耳朵"
+    style="width: 100%; height: 100%; border: none;"
+  ></iframe>
+</div>
+
+<script>
+window.addEventListener('message', (event) => {
+  const data = event.data;
+  if (!data || typeof data !== 'object') return;
+
+  // 1. 收到标注完成数据
+  if (data.type === 'ANNOTATOR_SAVE' && data.key === 'pig_001.jpg') {
+    console.log('✅ 标注保存结果:', data.polygons);
+    saveToMyBackend(data); // 存入自身业务系统数据库
+  }
+
+  // 2. 收到操作员取消
+  if (data.type === 'ANNOTATOR_CANCEL') {
+    console.log('操作员取消了本次标注');
+  }
+});
+</script>
+```
+
+##### 方式二：`window.open` 新标签页弹出方式
+```html
 <button id="openAnnotatorBtn">开始标注图片</button>
 
 <script>
@@ -407,34 +437,21 @@ document.getElementById('openAnnotatorBtn').addEventListener('click', () => {
   const classes = '划痕,凹坑,杂质';
 
   // 1. 弹出标注微工作台窗口
-  const annotatorHost = 'http://192.168.1.100:9523'; // 替换为你的标注服务地址
+  const annotatorHost = 'http://192.168.1.100:9523';
   const targetUrl = `${annotatorHost}/?mode=standalone&key=${encodeURIComponent(currentKey)}&image=${encodeURIComponent(imgUrl)}&classes=${encodeURIComponent(classes)}`;
   
   const popupWin = window.open(targetUrl, '_blank');
 
   // 2. 监听标注回传事件
   const handleMessage = (event) => {
-    // 安全建议：可在生产环境中校验 event.origin
     const data = event.data;
     if (!data || typeof data !== 'object') return;
 
-    // 收到标注完成结果
     if (data.type === 'ANNOTATOR_SAVE' && data.key === currentKey) {
       console.log('✅ 成功获取标注多边形数据：', data.polygons);
-      console.log('类别体系：', data.classes);
-
-      // 调用第三方自身已有的保存 API 存入自身业务数据库
-      saveToMyBackend({
-        imageKey: data.key,
-        polygons: data.polygons,
-        imageSize: data.image
-      });
-
-      // 移除当前监听器
+      saveToMyBackend(data);
       window.removeEventListener('message', handleMessage);
     }
-
-    // 收到用户放弃取消
     if (data.type === 'ANNOTATOR_CANCEL' && data.key === currentKey) {
       console.log('操作员取消了标注');
       window.removeEventListener('message', handleMessage);

@@ -117,6 +117,16 @@
           <span>接口文档</span>
         </button>
 
+        <!-- 共享标注微工作台 (iframe / 弹窗) 集成指南入口按钮 -->
+        <button class="api-docs-nav-btn" @click="showStandaloneDocsModal = true" title="查看第三方系统嵌入共享独立标注微工作台 (iframe / 弹窗) 集成指南">
+          <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+            <line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          <span>嵌入标注</span>
+        </button>
+
         <button class="theme-toggle-btn" @click="toggleTheme" title="切换主题">
           <!-- 亮色下显示月亮 -->
           <svg v-if="!isDark" style="width: 18px; height: 18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2103,15 +2113,20 @@
 
     <!-- 第三方开放推理接口文档弹窗 -->
     <ApiDocsModal v-model="showApiDocsModal" />
+
+    <!-- 共享独立标注微工作台 (iframe / 弹窗) 集成指南弹窗 -->
+    <StandaloneDocsModal v-model="showStandaloneDocsModal" />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import ApiDocsModal from './components/ApiDocsModal.vue';
+import StandaloneDocsModal from './components/StandaloneDocsModal.vue';
 
-// 接口文档弹窗显隐状态
+// 接口文档与嵌入指南弹窗显隐状态
 const showApiDocsModal = ref(false);
+const showStandaloneDocsModal = ref(false);
 
 // 动态检测后端接口，开发环境指向 9523，生产环境同源
 const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
@@ -4360,6 +4375,30 @@ const handleStandaloneMessage = async (event) => {
   }
 };
 
+// 获取通信目标父级窗口（兼容 iframe 模式的 window.parent 与 window.open 的 window.opener）
+const getParentWindow = () => {
+  if (typeof window !== 'undefined') {
+    // 优先检测 iframe 嵌套（父级窗口不等于自身）
+    if (window.parent && window.parent !== window) {
+      return window.parent;
+    }
+    // 其次检测 window.open 弹出的父窗口
+    if (window.opener && !window.opener.closed) {
+      return window.opener;
+    }
+  }
+  return null;
+};
+
+// 检测当前是否处于 iframe 嵌入模式
+const isInIframe = () => {
+  try {
+    return window.self !== window.top;
+  } catch (e) {
+    return true;
+  }
+};
+
 // 独立模式保存并回传标注数据
 const handleStandaloneSave = async () => {
   if (!currentImage.value) {
@@ -4398,17 +4437,19 @@ const handleStandaloneSave = async () => {
     console.warn('清理临时沙箱图片异常:', e);
   }
 
-  // 检查是否存在父窗口 (window.opener)
-  if (window.opener && !window.opener.closed) {
-    window.opener.postMessage(cleanPayload, '*');
+  // 检查是否存在父级窗口 (支持 iframe 的 window.parent 与 window.open 的 window.opener)
+  const targetWin = getParentWindow();
+  if (targetWin) {
+    targetWin.postMessage(cleanPayload, '*');
     showToast('标注数据已保存并回传！', 'success');
-    if (standaloneAutoClose.value) {
+    // 若在 iframe 中嵌入，由父系统自行隐藏/处理组件，无需调用 window.close()
+    if (standaloneAutoClose.value && !isInIframe()) {
       setTimeout(() => {
         window.close();
       }, 500);
     }
   } else {
-    // 兜底：若父窗口已关闭，弹出复制弹窗供用户手动备份 JSON
+    // 兜底：若父窗口未连接，弹出复制弹窗供用户手动备份 JSON
     standaloneResultJson.value = JSON.stringify(cleanPayload, null, 2);
     showStandaloneCopyModal.value = true;
     showToast('已生成标注数据，父窗口未连接，请点击复制', 'info');
@@ -4430,13 +4471,18 @@ const handleStandaloneCancel = async () => {
     } catch (e) {}
   }
 
-  if (window.opener && !window.opener.closed) {
-    window.opener.postMessage({
+  const targetWin = getParentWindow();
+  if (targetWin) {
+    targetWin.postMessage({
       type: 'ANNOTATOR_CANCEL',
       key: standaloneKey.value
     }, '*');
   }
-  window.close();
+  if (!isInIframe()) {
+    window.close();
+  } else {
+    showToast('已向父页面发送取消信号', 'info');
+  }
 };
 
 // 复制独立模式 JSON
@@ -4906,9 +4952,10 @@ onMounted(async () => {
     // 监听来自父窗口的 postMessage
     window.addEventListener('message', handleStandaloneMessage);
 
-    // 向父窗口发送 ANNOTATOR_READY 握手就绪信号
-    if (window.opener && !window.opener.closed) {
-      window.opener.postMessage({
+    // 向父窗口发送 ANNOTATOR_READY 握手就绪信号 (兼容 iframe 与 window.open)
+    const targetWin = getParentWindow();
+    if (targetWin) {
+      targetWin.postMessage({
         type: 'ANNOTATOR_READY',
         key: standaloneKey.value
       }, '*');
